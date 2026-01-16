@@ -5,7 +5,7 @@ region: nyc
 services:
   - name: backend
     github:
-      repo: rabermudezg13/KellyApp2026
+      repo: rabermudezg13/NewKellyApp2026
       branch: main
       deploy_on_push: true
     source_dir: new Kelly App/kelly-app-v2/backend
@@ -44,7 +44,7 @@ services:
 static_sites:
   - name: frontend
     github:
-      repo: rabermudezg13/KellyApp2026
+      repo: rabermudezg13/NewKellyApp2026
       branch: main
       deploy_on_push: true
     source_dir: new Kelly App/kelly-app-v2/frontend
