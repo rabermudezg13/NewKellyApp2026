@@ -74,3 +74,4 @@ Para evitar pérdida de datos en el futuro:
 2. Backups automáticos programados
 3. Validación de integridad de datos al iniciar el servidor
 
+

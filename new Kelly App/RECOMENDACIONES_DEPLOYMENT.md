@@ -385,3 +385,4 @@ CORS_ORIGINS=https://frontend.kelly-education.com
 *Listo para proceder con el desarrollo en puertos 3025 y 3026*
 
 
+

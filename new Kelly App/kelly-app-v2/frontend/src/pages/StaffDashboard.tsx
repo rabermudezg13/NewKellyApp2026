@@ -1,15 +1,18 @@
 import React, { useState, useEffect } from 'react'
-import { getLiveInfoSessions, getCompletedInfoSessions, getNewHireOrientations, getBadges, getFingerprints, getMyVisits, getCurrentUser, notifyTeamVisit } from '../services/api'
-import type { InfoSessionWithSteps } from '../types'
+import { getLiveInfoSessions, getCompletedInfoSessions, getNewHireOrientations, getBadges, getFingerprints, getMyVisits, getCurrentUser, notifyTeamVisit, getNewHireOrientation, updateNewHireOrientation } from '../services/api'
+import type { InfoSessionWithSteps, NewHireOrientation, NewHireOrientationWithSteps } from '../types'
 import { formatMiamiTime, getMiamiDateKey, formatMiamiDateDisplay } from '../utils/dateUtils'
+import CHRPage from './CHRPage'
+import StatisticsDashboard from './StatisticsDashboard'
 
-type TabType = 'info-session' | 'info-session-completed' | 'new-hire-orientation' | 'badges' | 'fingerprints' | 'my-visits'
+type TabType = 'info-session' | 'info-session-completed' | 'new-hire-orientation' | 'badges' | 'fingerprints' | 'my-visits' | 'statistics' | 'chr'
 
 function StaffDashboard() {
   const [activeTab, setActiveTab] = useState<TabType>('info-session')
   const [liveSessions, setLiveSessions] = useState<InfoSessionWithSteps[]>([])
   const [completedSessions, setCompletedSessions] = useState<InfoSessionWithSteps[]>([])
-  const [newHireOrientations, setNewHireOrientations] = useState<any[]>([])
+  const [newHireOrientations, setNewHireOrientations] = useState<NewHireOrientation[]>([])
+  const [selectedOrientation, setSelectedOrientation] = useState<NewHireOrientationWithSteps | null>(null)
   const [badges, setBadges] = useState<any[]>([])
   const [fingerprints, setFingerprints] = useState<any[]>([])
   const [myVisits, setMyVisits] = useState<any[]>([])
@@ -77,6 +80,44 @@ function StaffDashboard() {
     }
   }
 
+  const refreshDataInBackground = async () => {
+    try {
+      setRefreshing(true)
+      // Load data in background without clearing the screen
+      switch (activeTab) {
+        case 'info-session':
+          const live = await getLiveInfoSessions()
+          setLiveSessions(live)
+          break
+        case 'info-session-completed':
+          const completed = await getCompletedInfoSessions()
+          setCompletedSessions(completed)
+          break
+        case 'new-hire-orientation':
+          const orientations = await getNewHireOrientations()
+          setNewHireOrientations(orientations)
+          break
+        case 'badges':
+          const badgesData = await getBadges()
+          setBadges(badgesData)
+          break
+        case 'fingerprints':
+          const fingerprintsData = await getFingerprints()
+          setFingerprints(fingerprintsData)
+          break
+        case 'my-visits':
+          const visits = await getMyVisits()
+          setMyVisits(visits)
+          break
+      }
+    } catch (error) {
+      console.error('Error refreshing data:', error)
+      // Silently fail - don't show error on background refresh
+    } finally {
+      setRefreshing(false)
+    }
+  }
+
   const renderInfoSessionLive = () => {
     if (loading) return <p className="text-center py-8">Loading...</p>
     
@@ -105,6 +146,7 @@ function StaffDashboard() {
             <table className="min-w-full table-auto">
               <thead>
                 <tr className="bg-gray-200">
+                  <th className="px-4 py-2 text-left">#</th>
                   <th className="px-4 py-2 text-left">Name</th>
                   <th className="px-4 py-2 text-left">Email</th>
                   <th className="px-4 py-2 text-left">Phone</th>
@@ -123,7 +165,7 @@ function StaffDashboard() {
                     <React.Fragment key={dateKey}>
                       {dateIndex > 0 && (
                         <tr>
-                          <td colSpan={9} className="px-4 py-3 bg-gray-100 border-t-2 border-gray-300">
+                          <td colSpan={10} className="px-4 py-3 bg-gray-100 border-t-2 border-gray-300">
                             <div className="text-center">
                               <span className="text-gray-700 font-bold text-lg">
                                 ─── {formatMiamiDateDisplay(sessionsForDate[0].created_at)} ───
@@ -132,8 +174,11 @@ function StaffDashboard() {
                           </td>
                         </tr>
                       )}
-                      {sessionsForDate.map((session) => (
+                      {sessionsForDate.map((session, sessionIndex) => (
                         <tr key={session.id} className="border-b hover:bg-gray-50">
+                          <td className="px-4 py-2 font-semibold text-gray-600">
+                            {sessionIndex + 1}
+                          </td>
                           <td className="px-4 py-2 font-semibold">
                             {session.first_name} {session.last_name}
                           </td>
@@ -226,6 +271,7 @@ function StaffDashboard() {
             <table className="min-w-full table-auto">
               <thead>
                 <tr className="bg-gray-200">
+                  <th className="px-4 py-2 text-left">#</th>
                   <th className="px-4 py-2 text-left">Name</th>
                   <th className="px-4 py-2 text-left">Email</th>
                   <th className="px-4 py-2 text-left">Assigned Recruiter</th>
@@ -243,7 +289,7 @@ function StaffDashboard() {
                     <React.Fragment key={dateKey}>
                       {dateIndex > 0 && (
                         <tr>
-                          <td colSpan={8} className="px-4 py-3 bg-gray-100 border-t-2 border-gray-300">
+                          <td colSpan={9} className="px-4 py-3 bg-gray-100 border-t-2 border-gray-300">
                             <div className="text-center">
                               <span className="text-gray-700 font-bold text-lg">
                                 ─── {formatMiamiDateDisplay(sessionsForDate[0].created_at)} ───
@@ -252,8 +298,11 @@ function StaffDashboard() {
                           </td>
                         </tr>
                       )}
-                      {sessionsForDate.map((session) => (
+                      {sessionsForDate.map((session, sessionIndex) => (
                         <tr key={session.id} className="border-b">
+                          <td className="px-4 py-2 font-semibold text-gray-600">
+                            {sessionIndex + 1}
+                          </td>
                           <td className="px-4 py-2 font-semibold">
                             {session.first_name} {session.last_name}
                           </td>
@@ -330,6 +379,324 @@ function StaffDashboard() {
     )
   }
 
+  const renderNewHireOrientations = () => {
+    if (loading) return <p className="text-center py-8">Loading...</p>
+    
+    // Group orientations by date
+    const groupedOrientations: { [key: string]: NewHireOrientation[] } = {}
+    newHireOrientations.forEach((orientation) => {
+      const dateKey = getMiamiDateKey(orientation.created_at)
+      if (!groupedOrientations[dateKey]) {
+        groupedOrientations[dateKey] = []
+      }
+      groupedOrientations[dateKey].push(orientation)
+    })
+    
+    // Sort date keys (most recent first)
+    const sortedDateKeys = Object.keys(groupedOrientations).sort().reverse()
+    
+    return (
+      <div className="space-y-4">
+        <div className="bg-blue-50 border-l-4 border-blue-500 p-4 mb-4">
+          <p className="text-blue-800 font-bold">🎓 New Hire Orientations</p>
+        </div>
+        {newHireOrientations.length === 0 ? (
+          <p className="text-center py-8 text-gray-500">No new hire orientations registered</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="min-w-full table-auto">
+              <thead>
+                <tr className="bg-gray-200">
+                  <th className="px-4 py-2 text-left">#</th>
+                  <th className="px-4 py-2 text-left">Name</th>
+                  <th className="px-4 py-2 text-left">Email</th>
+                  <th className="px-4 py-2 text-left">Phone</th>
+                  <th className="px-4 py-2 text-left">Time Slot</th>
+                  <th className="px-4 py-2 text-left">Registered At</th>
+                  <th className="px-4 py-2 text-left">Assigned Recruiter</th>
+                  <th className="px-4 py-2 text-left">Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {sortedDateKeys.map((dateKey, dateIndex) => {
+                  const orientationsForDate = groupedOrientations[dateKey]
+                  return (
+                    <React.Fragment key={dateKey}>
+                      {dateIndex > 0 && (
+                        <tr>
+                          <td colSpan={8} className="px-4 py-3 bg-gray-100 border-t-2 border-gray-300">
+                            <div className="text-center">
+                              <span className="text-gray-700 font-bold text-lg">
+                                ─── {formatMiamiDateDisplay(orientationsForDate[0].created_at)} ───
+                              </span>
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                      {orientationsForDate.map((orientation, orientationIndex) => (
+                        <tr 
+                          key={orientation.id} 
+                          className="border-b hover:bg-gray-50 cursor-pointer"
+                          onClick={() => handleOpenOrientationDetails(orientation)}
+                        >
+                          <td className="px-4 py-2 font-semibold text-gray-600">
+                            {orientationIndex + 1}
+                          </td>
+                          <td className="px-4 py-2 font-semibold">
+                            {orientation.first_name} {orientation.last_name}
+                          </td>
+                          <td className="px-4 py-2">{orientation.email}</td>
+                          <td className="px-4 py-2">{orientation.phone}</td>
+                          <td className="px-4 py-2">{orientation.time_slot}</td>
+                          <td className="px-4 py-2">
+                            <span className="text-gray-700 text-sm">
+                              {formatMiamiTime(orientation.created_at)}
+                            </span>
+                          </td>
+                          <td className="px-4 py-2">
+                            {orientation.assigned_recruiter_name ? (
+                              <a
+                                href={`/recruiter/${orientation.assigned_recruiter_id}/dashboard`}
+                                className="px-2 py-1 rounded bg-blue-100 text-blue-800 hover:bg-blue-200"
+                                onClick={(e) => e.stopPropagation()}
+                              >
+                                {orientation.assigned_recruiter_name}
+                              </a>
+                            ) : (
+                              <span className="text-gray-400">Not assigned</span>
+                            )}
+                          </td>
+                          <td className="px-4 py-2">
+                            <span className={`px-2 py-1 rounded text-sm ${
+                              orientation.status === 'completed' 
+                                ? 'bg-green-100 text-green-800' 
+                                : orientation.status === 'in-progress'
+                                ? 'bg-yellow-100 text-yellow-800'
+                                : 'bg-blue-100 text-blue-800'
+                            }`}>
+                              {orientation.status}
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                    </React.Fragment>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    )
+  }
+
+  const renderBadges = () => {
+    if (loading) return <p className="text-center py-8">Loading...</p>
+    
+    // Group badges by date
+    const groupedBadges: { [key: string]: any[] } = {}
+    badges.forEach((badge) => {
+      const dateKey = getMiamiDateKey(badge.created_at)
+      if (!groupedBadges[dateKey]) {
+        groupedBadges[dateKey] = []
+      }
+      groupedBadges[dateKey].push(badge)
+    })
+    
+    // Sort date keys (most recent first)
+    const sortedDateKeys = Object.keys(groupedBadges).sort().reverse()
+    
+    return (
+      <div className="space-y-4">
+        <div className="bg-blue-50 border-l-4 border-blue-500 p-4 mb-4">
+          <p className="text-blue-800 font-bold">🪪 Badges</p>
+        </div>
+        {badges.length === 0 ? (
+          <p className="text-center py-8 text-gray-500">No badges registered</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="min-w-full table-auto">
+              <thead>
+                <tr className="bg-gray-200">
+                  <th className="px-4 py-2 text-left">#</th>
+                  <th className="px-4 py-2 text-left">Name</th>
+                  <th className="px-4 py-2 text-left">Email</th>
+                  <th className="px-4 py-2 text-left">Phone</th>
+                  <th className="px-4 py-2 text-left">Registered At</th>
+                  <th className="px-4 py-2 text-left">Status</th>
+                  <th className="px-4 py-2 text-left">Print Badge</th>
+                </tr>
+              </thead>
+              <tbody>
+                {sortedDateKeys.map((dateKey, dateIndex) => {
+                  const badgesForDate = groupedBadges[dateKey]
+                  return (
+                    <React.Fragment key={dateKey}>
+                      {dateIndex > 0 && (
+                        <tr>
+                          <td colSpan={7} className="px-4 py-3 bg-gray-100 border-t-2 border-gray-300">
+                            <div className="text-center">
+                              <span className="text-gray-700 font-bold text-lg">
+                                ─── {formatMiamiDateDisplay(badgesForDate[0].created_at)} ───
+                              </span>
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                      {badgesForDate.map((badge, badgeIndex) => (
+                        <tr key={badge.id} className="border-b hover:bg-gray-50">
+                          <td className="px-4 py-2 font-semibold text-gray-600">
+                            {badgeIndex + 1}
+                          </td>
+                          <td className="px-4 py-2 font-semibold">
+                            {badge.first_name} {badge.last_name}
+                          </td>
+                          <td className="px-4 py-2">{badge.email}</td>
+                          <td className="px-4 py-2">{badge.phone}</td>
+                          <td className="px-4 py-2">
+                            <span className="text-gray-700 text-sm">
+                              {formatMiamiTime(badge.created_at)}
+                            </span>
+                          </td>
+                          <td className="px-4 py-2">
+                            <span className={`px-2 py-1 rounded text-sm ${
+                              badge.status === 'completed' 
+                                ? 'bg-green-100 text-green-800' 
+                                : badge.status === 'in-progress'
+                                ? 'bg-yellow-100 text-yellow-800'
+                                : 'bg-blue-100 text-blue-800'
+                            }`}>
+                              {badge.status}
+                            </span>
+                          </td>
+                          <td className="px-4 py-2">
+                            <a
+                              href="https://kellyeducationsouthflorida.us.trustedauth.com/#/"
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="inline-block bg-blue-600 hover:bg-blue-700 text-white font-bold py-1 px-4 rounded text-sm transition-colors"
+                            >
+                              🖨️ Print
+                            </a>
+                          </td>
+                        </tr>
+                      ))}
+                    </React.Fragment>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    )
+  }
+
+  const renderFingerprints = () => {
+    if (loading) return <p className="text-center py-8">Loading...</p>
+    
+    // Group fingerprints by date
+    const groupedFingerprints: { [key: string]: any[] } = {}
+    fingerprints.forEach((fingerprint) => {
+      const dateKey = getMiamiDateKey(fingerprint.created_at)
+      if (!groupedFingerprints[dateKey]) {
+        groupedFingerprints[dateKey] = []
+      }
+      groupedFingerprints[dateKey].push(fingerprint)
+    })
+    
+    // Sort date keys (most recent first)
+    const sortedDateKeys = Object.keys(groupedFingerprints).sort().reverse()
+    
+    return (
+      <div className="space-y-4">
+        <div className="bg-blue-50 border-l-4 border-blue-500 p-4 mb-4">
+          <p className="text-blue-800 font-bold">👆 Fingerprints</p>
+        </div>
+        {fingerprints.length === 0 ? (
+          <p className="text-center py-8 text-gray-500">No fingerprint appointments registered</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="min-w-full table-auto">
+              <thead>
+                <tr className="bg-gray-200">
+                  <th className="px-4 py-2 text-left">#</th>
+                  <th className="px-4 py-2 text-left">Name</th>
+                  <th className="px-4 py-2 text-left">Email</th>
+                  <th className="px-4 py-2 text-left">Phone</th>
+                  <th className="px-4 py-2 text-left">ZIP Code</th>
+                  <th className="px-4 py-2 text-left">Appointment Time</th>
+                  <th className="px-4 py-2 text-left">Type</th>
+                  <th className="px-4 py-2 text-left">Registered At</th>
+                  <th className="px-4 py-2 text-left">Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {sortedDateKeys.map((dateKey, dateIndex) => {
+                  const fingerprintsForDate = groupedFingerprints[dateKey]
+                  return (
+                    <React.Fragment key={dateKey}>
+                      {dateIndex > 0 && (
+                        <tr>
+                          <td colSpan={9} className="px-4 py-3 bg-gray-100 border-t-2 border-gray-300">
+                            <div className="text-center">
+                              <span className="text-gray-700 font-bold text-lg">
+                                ─── {formatMiamiDateDisplay(fingerprintsForDate[0].created_at)} ───
+                              </span>
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                      {fingerprintsForDate.map((fingerprint, fingerprintIndex) => (
+                        <tr key={fingerprint.id} className="border-b hover:bg-gray-50">
+                          <td className="px-4 py-2 font-semibold text-gray-600">
+                            {fingerprintIndex + 1}
+                          </td>
+                          <td className="px-4 py-2 font-semibold">
+                            {fingerprint.first_name} {fingerprint.last_name}
+                          </td>
+                          <td className="px-4 py-2">{fingerprint.email}</td>
+                          <td className="px-4 py-2">{fingerprint.phone}</td>
+                          <td className="px-4 py-2">{fingerprint.zip_code || 'N/A'}</td>
+                          <td className="px-4 py-2">{fingerprint.appointment_time}</td>
+                          <td className="px-4 py-2">
+                            <span className={`px-2 py-1 rounded text-sm ${
+                              fingerprint.fingerprint_type === 'dcf' 
+                                ? 'bg-purple-100 text-purple-800' 
+                                : 'bg-blue-100 text-blue-800'
+                            }`}>
+                              {fingerprint.fingerprint_type}
+                            </span>
+                          </td>
+                          <td className="px-4 py-2">
+                            <span className="text-gray-700 text-sm">
+                              {formatMiamiTime(fingerprint.created_at)}
+                            </span>
+                          </td>
+                          <td className="px-4 py-2">
+                            <span className={`px-2 py-1 rounded text-sm ${
+                              fingerprint.status === 'completed' 
+                                ? 'bg-green-100 text-green-800' 
+                                : fingerprint.status === 'in-progress'
+                                ? 'bg-yellow-100 text-yellow-800'
+                                : 'bg-blue-100 text-blue-800'
+                            }`}>
+                              {fingerprint.status}
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                    </React.Fragment>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    )
+  }
+
   const renderGenericTable = (data: any[], fields: string[]) => {
     if (loading) return <p className="text-center py-8">Loading...</p>
     
@@ -370,8 +737,24 @@ function StaffDashboard() {
     
     const unreadVisits = myVisits.filter(v => v.status === 'pending')
     
+    // Group visits by date
+    const groupedVisits: { [key: string]: any[] } = {}
+    myVisits.forEach((visit) => {
+      const dateKey = getMiamiDateKey(visit.created_at)
+      if (!groupedVisits[dateKey]) {
+        groupedVisits[dateKey] = []
+      }
+      groupedVisits[dateKey].push(visit)
+    })
+    
+    // Sort date keys (most recent first)
+    const sortedDateKeys = Object.keys(groupedVisits).sort().reverse()
+    
     return (
       <div className="space-y-4">
+        <div className="bg-blue-50 border-l-4 border-blue-500 p-4 mb-4">
+          <p className="text-blue-800 font-bold">👥 My Visits</p>
+        </div>
         {unreadVisits.length > 0 && (
           <div className="bg-yellow-50 border-l-4 border-yellow-500 p-4 mb-4">
             <p className="text-yellow-800 font-bold">
@@ -382,48 +765,93 @@ function StaffDashboard() {
         {myVisits.length === 0 ? (
           <p className="text-center py-8 text-gray-500">No visits assigned to you</p>
         ) : (
-          <div className="space-y-3">
-            {myVisits.map((visit) => (
-              <div
-                key={visit.id}
-                className={`border rounded-lg p-4 ${
-                  visit.status === 'pending' ? 'bg-yellow-50 border-yellow-300' : 'bg-white'
-                }`}
-              >
-                <div className="flex justify-between items-start">
-                  <div>
-                    <h3 className="font-bold text-lg">{visit.visitor_name}</h3>
-                    {visit.visitor_email && <p className="text-gray-600">{visit.visitor_email}</p>}
-                    <p className="text-gray-700 mt-2">{visit.reason}</p>
-                    <p className="text-sm text-gray-500 mt-2">
-                      Team: {visit.team} | Registered: {formatMiamiTime(visit.created_at)}
-                    </p>
-                  </div>
-                  <div className="text-right">
-                    <span className={`px-3 py-1 rounded text-sm ${
-                      visit.status === 'pending' ? 'bg-yellow-100 text-yellow-800' : 'bg-green-100 text-green-800'
-                    }`}>
-                      {visit.status}
-                    </span>
-                    {visit.status === 'pending' && (
-                      <button
-                        onClick={async () => {
-                          try {
-                            await notifyTeamVisit(visit.id)
-                            loadData()
-                          } catch (error) {
-                            alert('Error marking as notified')
-                          }
-                        }}
-                        className="mt-2 px-3 py-1 bg-blue-600 text-white rounded text-sm hover:bg-blue-700"
-                      >
-                        Mark as Notified
-                      </button>
-                    )}
-                  </div>
-                </div>
-              </div>
-            ))}
+          <div className="overflow-x-auto">
+            <table className="min-w-full table-auto">
+              <thead>
+                <tr className="bg-gray-200">
+                  <th className="px-4 py-2 text-left">#</th>
+                  <th className="px-4 py-2 text-left">Visitor Name</th>
+                  <th className="px-4 py-2 text-left">Email</th>
+                  <th className="px-4 py-2 text-left">Team</th>
+                  <th className="px-4 py-2 text-left">Reason</th>
+                  <th className="px-4 py-2 text-left">Registered At</th>
+                  <th className="px-4 py-2 text-left">Status</th>
+                  <th className="px-4 py-2 text-left">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {sortedDateKeys.map((dateKey, dateIndex) => {
+                  const visitsForDate = groupedVisits[dateKey]
+                  return (
+                    <React.Fragment key={dateKey}>
+                      {dateIndex > 0 && (
+                        <tr>
+                          <td colSpan={8} className="px-4 py-3 bg-gray-100 border-t-2 border-gray-300">
+                            <div className="text-center">
+                              <span className="text-gray-700 font-bold text-lg">
+                                ─── {formatMiamiDateDisplay(visitsForDate[0].created_at)} ───
+                              </span>
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                      {visitsForDate.map((visit, visitIndex) => (
+                        <tr key={visit.id} className={`border-b hover:bg-gray-50 ${
+                          visit.status === 'pending' ? 'bg-yellow-50' : ''
+                        }`}>
+                          <td className="px-4 py-2 font-semibold text-gray-600">
+                            {visitIndex + 1}
+                          </td>
+                          <td className="px-4 py-2 font-semibold">
+                            {visit.visitor_name}
+                          </td>
+                          <td className="px-4 py-2">{visit.visitor_email || 'N/A'}</td>
+                          <td className="px-4 py-2">{visit.team || 'N/A'}</td>
+                          <td className="px-4 py-2">
+                            <div className="max-w-xs truncate" title={visit.reason}>
+                              {visit.reason}
+                            </div>
+                          </td>
+                          <td className="px-4 py-2">
+                            <span className="text-gray-700 text-sm">
+                              {formatMiamiTime(visit.created_at)}
+                            </span>
+                          </td>
+                          <td className="px-4 py-2">
+                            <span className={`px-2 py-1 rounded text-sm ${
+                              visit.status === 'completed' 
+                                ? 'bg-green-100 text-green-800' 
+                                : visit.status === 'notified'
+                                ? 'bg-blue-100 text-blue-800'
+                                : 'bg-yellow-100 text-yellow-800'
+                            }`}>
+                              {visit.status}
+                            </span>
+                          </td>
+                          <td className="px-4 py-2">
+                            {visit.status === 'pending' && (
+                              <button
+                                onClick={async () => {
+                                  try {
+                                    await notifyTeamVisit(visit.id)
+                                    loadData()
+                                  } catch (error) {
+                                    alert('Error marking as notified')
+                                  }
+                                }}
+                                className="px-3 py-1 bg-blue-600 text-white rounded text-sm hover:bg-blue-700"
+                              >
+                                Mark as Notified
+                              </button>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </React.Fragment>
+                  )
+                })}
+              </tbody>
+            </table>
           </div>
         )}
       </div>
@@ -436,10 +864,18 @@ function StaffDashboard() {
         {/* Header */}
         <div className="bg-white rounded-lg shadow-lg p-6 mb-6">
           <div className="flex justify-between items-center">
-            <div>
-              <h1 className="text-3xl font-bold">Staff Dashboard</h1>
-              {currentUser && (
-                <p className="text-gray-600">Welcome, {currentUser.full_name}</p>
+            <div className="flex items-center gap-3">
+              <div>
+                <h1 className="text-3xl font-bold">Staff Dashboard</h1>
+                {currentUser && (
+                  <p className="text-gray-600">Welcome, {currentUser.full_name}</p>
+                )}
+              </div>
+              {refreshing && (
+                <div className="flex items-center gap-2 text-sm text-gray-500">
+                  <div className="w-4 h-4 border-2 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
+                  <span>Refreshing...</span>
+                </div>
               )}
             </div>
             <button
@@ -518,6 +954,26 @@ function StaffDashboard() {
             >
               👥 My Visits
             </button>
+            <button
+              onClick={() => setActiveTab('statistics')}
+              className={`px-6 py-3 font-semibold transition-colors ${
+                activeTab === 'statistics'
+                  ? 'bg-blue-600 text-white border-b-2 border-blue-600'
+                  : 'text-gray-600 hover:bg-gray-100'
+              }`}
+            >
+              📊 Statistics
+            </button>
+            <button
+              onClick={() => setActiveTab('chr')}
+              className={`px-6 py-3 font-semibold transition-colors ${
+                activeTab === 'chr'
+                  ? 'bg-green-600 text-white border-b-2 border-green-600'
+                  : 'text-gray-600 hover:bg-gray-100'
+              }`}
+            >
+              📝 CHR
+            </button>
           </div>
         </div>
 
@@ -525,12 +981,140 @@ function StaffDashboard() {
         <div className="bg-white rounded-lg shadow-lg p-6">
           {activeTab === 'info-session' && renderInfoSessionLive()}
           {activeTab === 'info-session-completed' && renderInfoSessionCompleted()}
-          {activeTab === 'new-hire-orientation' && renderGenericTable(newHireOrientations, ['first_name', 'last_name', 'email', 'phone', 'time_slot', 'status', 'created_at'])}
-          {activeTab === 'badges' && renderGenericTable(badges, ['first_name', 'last_name', 'email', 'phone', 'appointment_time', 'status', 'created_at'])}
-          {activeTab === 'fingerprints' && renderGenericTable(fingerprints, ['first_name', 'last_name', 'email', 'phone', 'appointment_time', 'fingerprint_type', 'status', 'created_at'])}
+          {activeTab === 'new-hire-orientation' && renderNewHireOrientations()}
+          {activeTab === 'badges' && renderBadges()}
+          {activeTab === 'fingerprints' && renderFingerprints()}
           {activeTab === 'my-visits' && renderMyVisits()}
+          {activeTab === 'statistics' && <StatisticsDashboard />}
+          {activeTab === 'chr' && <CHRPage />}
         </div>
       </div>
+
+      {/* New Hire Orientation Details Modal */}
+      {selectedOrientation && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 max-w-2xl w-full mx-4 max-h-[90vh] overflow-y-auto">
+            <div className="flex justify-between items-center mb-4">
+              <h2 className="text-2xl font-bold">
+                {selectedOrientation.first_name} {selectedOrientation.last_name}
+              </h2>
+              <button
+                onClick={() => setSelectedOrientation(null)}
+                className="text-gray-500 hover:text-gray-700 text-2xl"
+              >
+                ×
+              </button>
+            </div>
+
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Process Status
+                </label>
+                <select
+                  value={selectedOrientation.process_status || ''}
+                  onChange={(e) => setSelectedOrientation({ ...selectedOrientation, process_status: e.target.value || null })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                >
+                  <option value="">Select status</option>
+                  <option value="in-progress">In Progress</option>
+                  <option value="completed">Completed</option>
+                  <option value="pending">Pending</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Badge Status
+                </label>
+                <select
+                  value={selectedOrientation.badge_status || 'pending'}
+                  onChange={(e) => setSelectedOrientation({ ...selectedOrientation, badge_status: e.target.value })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                >
+                  <option value="pending">Pending</option>
+                  <option value="printed">Printed</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Steps Status
+                </label>
+                <select
+                  value={selectedOrientation.missing_steps ? 'missing' : 'completed'}
+                  onChange={(e) => {
+                    if (e.target.value === 'missing') {
+                      setSelectedOrientation({ ...selectedOrientation, missing_steps: '' })
+                    } else {
+                      setSelectedOrientation({ ...selectedOrientation, missing_steps: null })
+                    }
+                  }}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                >
+                  <option value="completed">Completed</option>
+                  <option value="missing">Missing Steps</option>
+                </select>
+              </div>
+
+              {selectedOrientation.missing_steps !== null && selectedOrientation.missing_steps !== undefined && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    What's Missing?
+                  </label>
+                  <textarea
+                    value={selectedOrientation.missing_steps || ''}
+                    onChange={(e) => setSelectedOrientation({ ...selectedOrientation, missing_steps: e.target.value })}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                    rows={4}
+                    placeholder="Describe what steps are missing..."
+                  />
+                </div>
+              )}
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Steps
+                </label>
+                <div className="space-y-2">
+                  {selectedOrientation.steps && selectedOrientation.steps.length > 0 ? (
+                    selectedOrientation.steps.map((step) => (
+                      <div key={step.id} className="flex items-center space-x-2 p-2 bg-gray-50 rounded">
+                        <input
+                          type="checkbox"
+                          checked={step.is_completed}
+                          disabled
+                          className="rounded"
+                        />
+                        <span className={step.is_completed ? 'line-through text-gray-500' : ''}>
+                          {step.step_name}
+                        </span>
+                      </div>
+                    ))
+                  ) : (
+                    <p className="text-gray-500 text-sm">No steps available</p>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            <div className="flex justify-end space-x-3 mt-6">
+              <button
+                onClick={() => setSelectedOrientation(null)}
+                className="px-4 py-2 border border-gray-300 rounded-md hover:bg-gray-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleSaveOrientationDetails}
+                className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"
+              >
+                Save
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

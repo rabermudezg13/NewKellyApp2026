@@ -4,7 +4,8 @@ import {
   getInfoSessionConfig, 
   updateInfoSessionConfig,
   getNewHireOrientationConfig,
-  updateNewHireOrientationConfig
+  updateNewHireOrientationConfig,
+  type StepConfig
 } from '../services/api'
 
 function AdminConfigurations() {
@@ -14,7 +15,11 @@ function AdminConfigurations() {
     time_slots: ['8:30 AM', '1:30 PM'],
     is_active: true,
   })
-  const [newHireConfig, setNewHireConfig] = useState({
+  const [newHireConfig, setNewHireConfig] = useState<{
+    max_sessions_per_day: number
+    time_slots: string[]
+    is_active: boolean
+  }>({
     max_sessions_per_day: 2,
     time_slots: ['9:00 AM', '2:00 PM'],
     is_active: true,
@@ -338,4 +343,5 @@ function AdminConfigurations() {
 }
 
 export default AdminConfigurations
+
 

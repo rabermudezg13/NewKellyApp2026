@@ -66,3 +66,4 @@ Si quieres ver más información sobre qué está pasando, revisa los logs del b
 
 Esto te ayudará a identificar el problema exacto.
 
+

@@ -56,3 +56,4 @@ def actualizar_tabla_exclusion():
 if __name__ == "__main__":
     actualizar_tabla_exclusion()
 
+

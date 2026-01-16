@@ -94,3 +94,4 @@ uvicorn.run("main:app", host="0.0.0.0", port=3027, reload=True)
 - El servidor se reinicia automáticamente cuando cambias código (modo `reload=True`)
 - Para detener el servidor, presiona `Ctrl+C`
 
+

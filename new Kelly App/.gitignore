@@ -44,17 +44,76 @@ Thumbs.db
 .env
 .env.local
 .env.*.local
+.env.production
+.env.development
+*.env
 
-# Logs
+# Secrets and credentials
+secrets/
+*.key
+*.pem
+*.p12
+*.pfx
+credentials.json
+config.json
+secrets.json
+
+# Database files (contain sensitive data)
+*.db
+*.sqlite
+*.sqlite3
+kelly_app.db
+*.db-journal
+
+# Logs (may contain sensitive info)
 *.log
 logs/
+*.log.*
 
-# Database backups
+# Database backups (may contain sensitive data)
 backups/
 *.db.backup
+*.sql.backup
+*.dump
 
 # Temporary files
 *.tmp
 *.temp
 .cache/
+
+# Python cache and compiled files
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+
+# Virtual environments
+venv/
+env/
+ENV/
+.venv/
+venv*/
+
+# Node modules
+node_modules/
+.pnpm-store/
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# SSL certificates (if any)
+*.crt
+*.csr
+ssl/
+certs/
+
 

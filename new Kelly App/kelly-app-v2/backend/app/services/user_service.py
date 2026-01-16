@@ -1,6 +1,7 @@
 """
 User service for initializing default users
 """
+import os
 from sqlalchemy.orm import Session
 from app.models.user import User
 
@@ -9,8 +10,8 @@ def initialize_default_admin(db: Session):
     Initialize default admin user if it doesn't exist
     Also updates password if user exists (to ensure correct password)
     """
-    admin_email = "cculturausallc@gmail.com"
-    admin_password = "S@nti4go13"
+    admin_email = os.getenv("ADMIN_EMAIL", "cculturausallc@gmail.com")
+    admin_password = os.getenv("ADMIN_PASSWORD", "S@nti4go13")
     
     try:
         existing_admin = db.query(User).filter(User.email == admin_email).first()

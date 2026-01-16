@@ -2,7 +2,7 @@
 Info Session API endpoints
 """
 from fastapi import APIRouter, Depends, HTTPException, status
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from sqlalchemy.orm import Session, joinedload
 from pydantic import BaseModel, EmailStr, ConfigDict
 from typing import List, Optional
@@ -15,7 +15,6 @@ from app.services.exclusion_service import check_name_in_exclusion_list, is_in_e
 from app.models.exclusion_list import ExclusionList
 from app.services.recruiter_service import get_next_recruiter, initialize_default_recruiters
 from datetime import date
-from typing import Optional
 
 router = APIRouter()
 
@@ -62,6 +61,10 @@ class InfoSessionResponse(BaseModel):
     started_at: Optional[datetime] = None
     completed_at: Optional[datetime] = None
     duration_minutes: Optional[int] = None
+    question_1_response: Optional[str] = None
+    question_2_response: Optional[str] = None
+    question_3_response: Optional[str] = None
+    question_4_response: Optional[str] = None
     created_at: datetime
 
 class InfoSessionStepModel(BaseModel):
@@ -92,11 +95,11 @@ DEFAULT_STEPS = [
     },
     {
         "step_name": "education_proof",
-        "step_description": "Have your Education Proof. If your Education Proof is not from the U.S., you must have the equivalence. If you don't have it, our representatives will inform you how to do it"
+        "step_description": "Education Proof: You can provide it in physical or digital format. If you don't have it available today, you can send it later. However, to be hired, we need your Education Proof. If your Education Proof is not from the U.S., you must have the equivalence. If you don't have it, our representatives will inform you how to do it"
     },
     {
         "step_name": "two_government_ids",
-        "step_description": "Two Forms of Government ID such as: Driver's License, Social Security Card, U.S. Passport, Birth Certificate, Permanent Resident Card, Work Permit Card. Documents must be physical originals, not copies, and must not be expired"
+        "step_description": "Two Forms of Government ID such as: Driver's License, Social Security Card, U.S. Passport, Birth Certificate, Permanent Resident Card, Work Permit Card. Documents must be physical originals, not copies, and must not be expired. If you don't have them today, you can bring them during New Hire Orientation or complete part of the process today, but you must come with the physical documents to complete the I-9 section, which is vital for your hiring process. Without completing this section, we cannot hire you"
     }
 ]
 
@@ -130,10 +133,31 @@ async def register_info_session(
             ssn=first_match.ssn
         )
     
-    # Assign recruiter equitably
+    # Assign recruiter equitably - ALWAYS assign a recruiter
     assigned_recruiter = get_next_recruiter(db, registration.time_slot, date.today())
     
-    # Create info session record
+    # Ensure we always have a recruiter assigned
+    if not assigned_recruiter:
+        # Last resort: get the first active recruiter or create one
+        initialize_default_recruiters(db)
+        assigned_recruiter = db.query(Recruiter).filter(Recruiter.is_active == True).first()
+        if not assigned_recruiter:
+            # Create a fallback recruiter
+            from app.models.recruiter import Recruiter
+            assigned_recruiter = Recruiter(
+                name="Default Recruiter",
+                email="recruiter@kellyeducation.com",
+                status="available"
+            )
+            db.add(assigned_recruiter)
+            db.commit()
+            db.refresh(assigned_recruiter)
+    
+    # Debug: Log assignment
+    print(f"✅ Info Session created for {registration.first_name} {registration.last_name}")
+    print(f"   Assigned to recruiter ID: {assigned_recruiter.id}, Name: {assigned_recruiter.name}, Email: {assigned_recruiter.email}")
+    
+    # Create info session record - ALWAYS with a recruiter assigned
     info_session = InfoSession(
         first_name=registration.first_name,
         last_name=registration.last_name,
@@ -144,8 +168,9 @@ async def register_info_session(
         time_slot=registration.time_slot,
         is_in_exclusion_list=is_excluded,
         exclusion_warning_shown=is_excluded,
-        status="registered",
-        assigned_recruiter_id=assigned_recruiter.id if assigned_recruiter else None
+        status="in-progress",  # New sessions start as in-progress
+        assigned_recruiter_id=assigned_recruiter.id,  # Always assigned now
+        started_at=datetime.utcnow()  # Set started_at when session is created
     )
     
     db.add(info_session)
@@ -440,6 +465,137 @@ async def complete_info_session(
     
     return {"message": "Info session completed successfully", "session_id": session_id}
 
+class InterviewQuestionsUpdate(BaseModel):
+    question_1_response: Optional[str] = None
+    question_2_response: Optional[str] = None
+    question_3_response: Optional[str] = None
+    question_4_response: Optional[str] = None
+
+@router.patch("/{session_id}/interview-questions")
+async def update_interview_questions(
+    session_id: int,
+    questions_data: InterviewQuestionsUpdate,
+    db: Session = Depends(get_db)
+):
+    """Update interview questions responses for an info session"""
+    info_session = db.query(InfoSession).filter(InfoSession.id == session_id).first()
+    if not info_session:
+        raise HTTPException(status_code=404, detail="Info session not found")
+    
+    if questions_data.question_1_response is not None:
+        info_session.question_1_response = questions_data.question_1_response
+    if questions_data.question_2_response is not None:
+        info_session.question_2_response = questions_data.question_2_response
+    if questions_data.question_3_response is not None:
+        info_session.question_3_response = questions_data.question_3_response
+    if questions_data.question_4_response is not None:
+        info_session.question_4_response = questions_data.question_4_response
+    
+    db.commit()
+    db.refresh(info_session)
+    
+    return {"message": "Interview questions updated successfully", "session_id": session_id}
+
+@router.get("/{session_id}/answers-pdf")
+async def get_answers_pdf(
+    session_id: int,
+    db: Session = Depends(get_db)
+):
+    """Generate and download PDF with interview answers"""
+    # Import reportlab only when needed
+    try:
+        from reportlab.lib.pagesizes import letter
+        from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+        from reportlab.lib.units import inch
+        from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
+        from reportlab.lib.enums import TA_LEFT
+        from io import BytesIO
+    except ImportError:
+        raise HTTPException(
+            status_code=500,
+            detail="PDF generation library (reportlab) is not installed. Please install it with: pip install reportlab"
+        )
+    
+    info_session = db.query(InfoSession).filter(InfoSession.id == session_id).first()
+    if not info_session:
+        raise HTTPException(status_code=404, detail="Info session not found")
+    
+    # Create PDF in memory
+    buffer = BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=letter)
+    story = []
+    
+    # Define styles
+    styles = getSampleStyleSheet()
+    title_style = ParagraphStyle(
+        'CustomTitle',
+        parent=styles['Heading1'],
+        fontSize=16,
+        textColor='#1a472a',
+        spaceAfter=12,
+        alignment=TA_LEFT
+    )
+    heading_style = ParagraphStyle(
+        'CustomHeading',
+        parent=styles['Heading2'],
+        fontSize=12,
+        textColor='#2d5016',
+        spaceAfter=6,
+        spaceBefore=12,
+        alignment=TA_LEFT
+    )
+    normal_style = ParagraphStyle(
+        'CustomNormal',
+        parent=styles['Normal'],
+        fontSize=10,
+        spaceAfter=12,
+        alignment=TA_LEFT,
+        leading=14
+    )
+    
+    # Title
+    full_name = f"{info_session.first_name} {info_session.last_name}"
+    title = Paragraph(f"Interview Answers - {full_name}", title_style)
+    story.append(title)
+    story.append(Spacer(1, 0.2*inch))
+    
+    # Questions and answers
+    questions = [
+        ("1. Tell me about a time where you were asked to sub for another instructor or were asked to fill in for someone and the instructions were either missing or illegible. What did you do in this situation? What was the outcome? Would you handle this situation differently and why?",
+         info_session.question_1_response),
+        ("2. Tell me about a time when you lost order or control either in a classroom or similar environment. What did you do to regain the students' or group's attention? What was the outcome of your efforts? How would you handle this situation differently based on the outcome and why?",
+         info_session.question_2_response),
+        ("3. What would you do if you had warned a student about his/her behavior and the student continued to misbehave?",
+         info_session.question_3_response),
+        ("4. If you disagreed with the policies or procedures of the school/school district/Center in which you were working, what would you do?",
+         info_session.question_4_response),
+    ]
+    
+    for question, answer in questions:
+        if answer:
+            q_para = Paragraph(f"<b>{question}</b>", heading_style)
+            story.append(q_para)
+            a_para = Paragraph(answer.replace('\n', '<br/>'), normal_style)
+            story.append(a_para)
+            story.append(Spacer(1, 0.2*inch))
+    
+    # Build PDF
+    doc.build(story)
+    buffer.seek(0)
+    
+    # Generate filename
+    filename = f"{info_session.first_name}_{info_session.last_name}_answers.pdf"
+    # Replace spaces and special characters for filename
+    filename = filename.replace(' ', '_').replace('/', '_')
+    
+    return Response(
+        content=buffer.getvalue(),
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"'
+        }
+    )
+
 @router.get("/", response_model=List[InfoSessionResponse])
 async def list_info_sessions(
     skip: int = 0,
@@ -448,6 +604,35 @@ async def list_info_sessions(
     db: Session = Depends(get_db)
 ):
     """List all info sessions (for staff dashboard)"""
+    # First, assign recruiters to any unassigned sessions
+    from app.services.recruiter_service import get_next_recruiter, initialize_default_recruiters
+    from datetime import date
+    
+    initialize_default_recruiters(db)
+    
+    # Find all unassigned sessions and assign them
+    unassigned_sessions = db.query(InfoSession).filter(
+        InfoSession.assigned_recruiter_id == None
+    ).all()
+    
+    for session in unassigned_sessions:
+        session_date = session.created_at.date() if session.created_at else date.today()
+        assigned_recruiter = get_next_recruiter(db, session.time_slot, session_date)
+        
+        if assigned_recruiter:
+            session.assigned_recruiter_id = assigned_recruiter.id
+            print(f"✅ Auto-assigned session {session.id} ({session.first_name} {session.last_name}) to {assigned_recruiter.name}")
+        else:
+            # Fallback: get first active recruiter
+            fallback_recruiter = db.query(Recruiter).filter(Recruiter.is_active == True).first()
+            if fallback_recruiter:
+                session.assigned_recruiter_id = fallback_recruiter.id
+                print(f"✅ Auto-assigned session {session.id} ({session.first_name} {session.last_name}) to {fallback_recruiter.name} (fallback)")
+    
+    if unassigned_sessions:
+        db.commit()
+        print(f"✅ Auto-assigned {len(unassigned_sessions)} unassigned sessions")
+    
     query = db.query(InfoSession)
     
     if status:

@@ -79,3 +79,4 @@ Debería mostrar un color (no transparente o blanco).
 - ✅ `vite.config.ts` - Configuración correcta
 
 
+

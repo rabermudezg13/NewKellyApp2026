@@ -166,3 +166,4 @@ Frontend en: http://localhost:3025
 *Implementación completada: 2025-01-27*
 
 
+

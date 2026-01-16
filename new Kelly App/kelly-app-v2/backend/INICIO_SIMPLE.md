@@ -59,3 +59,4 @@ python main.py
 2. ✅ Mejor manejo de errores en el hash de contraseñas
 3. ✅ El código no se detiene por errores menores
 
+

@@ -41,12 +41,11 @@ class FingerprintCreate(BaseModel):
     fingerprint_type: str  # regular or dcf
 
 class TeamVisitCreate(BaseModel):
-    visitor_name: str
-    visitor_email: Optional[EmailStr] = None
-    team: str
+    first_name: str
+    last_name: str
+    email: EmailStr
+    phone: str
     team_member_id: Optional[int] = None
-    team_member_name: Optional[str] = None
-    team_member_email: Optional[str] = None
     reason: str
 
 # Response models
@@ -144,7 +143,26 @@ async def register_team_visit(
     db: Session = Depends(get_db)
 ):
     """Register a team visit"""
-    team_visit = TeamVisit(**data.dict())
+    # Get team member info if team_member_id is provided
+    team_member_name = None
+    team_member_email = None
+    if data.team_member_id:
+        from app.models.user import User
+        team_member = db.query(User).filter(User.id == data.team_member_id).first()
+        if team_member:
+            team_member_name = team_member.full_name
+            team_member_email = team_member.email
+    
+    # Create team visit with visitor_name as full name
+    team_visit = TeamVisit(
+        visitor_name=f"{data.first_name} {data.last_name}",
+        visitor_email=data.email,
+        team="Staff Visit",  # Default team name
+        team_member_id=data.team_member_id,
+        team_member_name=team_member_name,
+        team_member_email=team_member_email,
+        reason=data.reason
+    )
     db.add(team_visit)
     db.commit()
     db.refresh(team_visit)
@@ -156,10 +174,38 @@ async def get_my_visits(
     current_user: User = Depends(get_current_user)
 ):
     """Get team visits assigned to current staff member"""
+    # Debug: Log current user info
+    print(f"🔍 Getting visits for user ID: {current_user.id}, Email: {current_user.email}, Name: {current_user.full_name}")
+    
     visits = db.query(TeamVisit).filter(
         TeamVisit.team_member_id == current_user.id
     ).order_by(TeamVisit.created_at.desc()).all()
+    
+    # Debug: Log visit count and details
+    print(f"📋 Found {len(visits)} visits for user {current_user.id}")
+    for visit in visits:
+        print(f"   - Visit ID: {visit.id}, Visitor: {visit.visitor_name}, Team Member ID: {visit.team_member_id}, Status: {visit.status}")
+    
     return [VisitResponse.model_validate(v).model_dump() for v in visits]
+
+@router.get("/team-visit/staff-members", response_model=List[dict])
+async def get_staff_members(
+    db: Session = Depends(get_db)
+):
+    """Get list of staff members for team visit selection (public endpoint)"""
+    from app.models.user import User
+    # Only show recruiter, management, and talent advisor roles (exclude admin)
+    staff_members = db.query(User).filter(
+        User.role.in_(["recruiter", "management", "talent"])
+    ).filter(User.is_active == True).order_by(User.full_name).all()
+    return [
+        {
+            "id": user.id,
+            "name": user.full_name,
+            "email": user.email
+        }
+        for user in staff_members
+    ]
 
 @router.get("/team-visit", response_model=List[VisitResponse])
 async def list_team_visits(

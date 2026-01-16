@@ -6,13 +6,24 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# Database URL - using SQLite for now, can be changed to PostgreSQL
+# Database URL - supports SQLite (development) and PostgreSQL (production)
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./kelly_app.db")
 
-engine = create_engine(
-    DATABASE_URL,
-    connect_args={"check_same_thread": False} if "sqlite" in DATABASE_URL else {}
-)
+# Configure engine based on database type
+if DATABASE_URL.startswith("postgresql") or DATABASE_URL.startswith("postgres"):
+    # PostgreSQL configuration
+    engine = create_engine(
+        DATABASE_URL,
+        pool_pre_ping=True,  # Verify connections before using
+        pool_size=10,
+        max_overflow=20
+    )
+else:
+    # SQLite configuration (development)
+    engine = create_engine(
+        DATABASE_URL,
+        connect_args={"check_same_thread": False}
+    )
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
@@ -25,5 +36,6 @@ def get_db():
         yield db
     finally:
         db.close()
+
 
 

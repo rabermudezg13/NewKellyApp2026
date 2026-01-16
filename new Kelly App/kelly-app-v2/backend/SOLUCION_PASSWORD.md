@@ -65,3 +65,4 @@ INFO:     Uvicorn running on http://0.0.0.0:3026 (Press CTRL+C to quit)
 
 El código ahora maneja automáticamente contraseñas largas truncándolas a 72 bytes (límite de bcrypt). Esto debería prevenir este error en el futuro.
 
+

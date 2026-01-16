@@ -14,3 +14,4 @@ async def get_info_sessions_dashboard(db: Session = Depends(get_db)):
     return {"message": "Info sessions dashboard endpoint"}
 
 
+

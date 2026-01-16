@@ -35,3 +35,4 @@ class ColumnDefinition(Base):
     # Relationship to template
     template = relationship("RowTemplate", back_populates="columns")
 
+

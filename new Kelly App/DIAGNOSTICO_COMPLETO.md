@@ -469,3 +469,4 @@ La aplicación **funciona** pero tiene problemas significativos de:
 *Diagnóstico generado el 2025-01-27*
 
 
+

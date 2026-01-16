@@ -2,6 +2,10 @@ import { BrowserRouter, Routes, Route } from 'react-router-dom'
 import HomePage from './pages/HomePage'
 import RegisterVisitPage from './pages/RegisterVisitPage'
 import InfoSessionPage from './pages/InfoSessionPage'
+import NewHireOrientationPage from './pages/NewHireOrientationPage'
+import FingerprintPage from './pages/FingerprintPage'
+import BadgePage from './pages/BadgePage'
+import TeamVisitPage from './pages/TeamVisitPage'
 import StaffLoginPage from './pages/StaffLoginPage'
 import StaffDashboard from './pages/StaffDashboard'
 import AdminLoginPage from './pages/AdminLoginPage'
@@ -19,6 +23,10 @@ function App() {
         <Route path="/" element={<HomePage />} />
         <Route path="/register-visit" element={<RegisterVisitPage />} />
         <Route path="/info-session" element={<InfoSessionPage />} />
+        <Route path="/new-hire-orientation" element={<NewHireOrientationPage />} />
+        <Route path="/fingerprints" element={<FingerprintPage />} />
+        <Route path="/badges" element={<BadgePage />} />
+        <Route path="/team-visit" element={<TeamVisitPage />} />
         <Route path="/staff/login" element={<StaffLoginPage />} />
         <Route path="/staff/dashboard" element={<StaffDashboard />} />
         <Route path="/admin/login" element={<AdminLoginPage />} />

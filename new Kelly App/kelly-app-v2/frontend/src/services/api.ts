@@ -1,14 +1,36 @@
 import axios from 'axios'
-import type { InfoSessionRegistration, InfoSessionWithSteps, Announcement } from '../types'
+import type { InfoSessionRegistration, InfoSessionWithSteps, Announcement, CHRCase, CHRDashboardStats, CHRStatusBreakdown, NewHireOrientationRegistration, NewHireOrientationWithSteps } from '../types'
 
-const API_BASE_URL = (import.meta as any).env?.VITE_API_URL || 'http://localhost:3026/api'
+// Detectar automáticamente la URL del backend basándose en la URL actual
+// Si se accede desde localhost, usa localhost. Si se accede desde una IP, usa esa IP.
+function getApiBaseUrl(): string {
+  const envUrl = (import.meta as any).env?.VITE_API_URL
+  if (envUrl) {
+    return envUrl
+  }
+  
+  // Si no hay VITE_API_URL configurado, detectar automáticamente
+  const hostname = window.location.hostname
+  const protocol = window.location.protocol
+  
+  // Si es localhost o 127.0.0.1, usar localhost
+  if (hostname === 'localhost' || hostname === '127.0.0.1') {
+    return 'http://localhost:3026/api'
+  }
+  
+  // Si se accede desde una IP o dominio, usar esa misma IP/dominio para el backend
+  // Asumimos que el backend está en el mismo host pero puerto 3026
+  return `${protocol}//${hostname}:3026/api`
+}
+
+const API_BASE_URL = getApiBaseUrl()
 
 const api = axios.create({
   baseURL: API_BASE_URL,
   headers: {
     'Content-Type': 'application/json',
   },
-  timeout: 10000, // 10 seconds timeout
+  timeout: 60000, // 60 seconds timeout for statistics queries
 })
 
 export default api
@@ -59,6 +81,26 @@ export const completeInfoSession = async (sessionId: number): Promise<{ message:
   return response.data
 }
 
+export const updateInterviewQuestions = async (
+  sessionId: number,
+  questions: {
+    question_1_response?: string
+    question_2_response?: string
+    question_3_response?: string
+    question_4_response?: string
+  }
+): Promise<{ message: string; session_id: number }> => {
+  const response = await api.patch(`/info-session/${sessionId}/interview-questions`, questions)
+  return response.data
+}
+
+export const downloadAnswersPDF = async (sessionId: number): Promise<Blob> => {
+  const response = await api.get(`/info-session/${sessionId}/answers-pdf`, {
+    responseType: 'blob'
+  })
+  return response.data
+}
+
 export const checkExclusion = async (
   firstName: string,
   lastName: string
@@ -99,6 +141,51 @@ export const getAvailableTimeSlots = async (): Promise<string[]> => {
   return response.data
 }
 
+// New Hire Orientation API
+export const registerNewHireOrientation = async (
+  data: NewHireOrientationRegistration
+): Promise<NewHireOrientationWithSteps> => {
+  const response = await api.post('/new-hire-orientation/register', data)
+  return response.data
+}
+
+export const getNewHireOrientation = async (id: number): Promise<NewHireOrientationWithSteps> => {
+  const response = await api.get(`/new-hire-orientation/${id}`)
+  return response.data
+}
+
+export const completeNewHireOrientationStep = async (orientationId: number, stepName: string): Promise<void> => {
+  await api.patch(`/new-hire-orientation/${orientationId}/steps/${stepName}/complete`)
+}
+
+export const completeNewHireOrientation = async (orientationId: number): Promise<{ message: string; orientation_id: number }> => {
+  const response = await api.post(`/new-hire-orientation/${orientationId}/complete`)
+  return response.data
+}
+
+export const getNewHireOrientationTimeSlots = async (): Promise<string[]> => {
+  const response = await api.get('/new-hire-orientation/time-slots')
+  return response.data
+}
+
+export const getNewHireOrientations = async (): Promise<NewHireOrientation[]> => {
+  const response = await api.get('/new-hire-orientation/')
+  return response.data
+}
+
+export const updateNewHireOrientation = async (
+  orientationId: number,
+  updateData: {
+    process_status?: string | null
+    badge_status?: string | null
+    missing_steps?: string | null
+    status?: string | null
+  }
+): Promise<NewHireOrientation> => {
+  const response = await api.patch(`/new-hire-orientation/${orientationId}`, updateData)
+  return response.data
+}
+
 export const getInfoSessionConfig = async (): Promise<{
   id: number
   max_sessions_per_day: number
@@ -118,10 +205,16 @@ export const updateInfoSessionConfig = async (config: {
 }
 
 // New Hire Orientation Config API
+export interface StepConfig {
+  step_name: string
+  step_description: string
+}
+
 export const getNewHireOrientationConfig = async (): Promise<{
   id: number
   max_sessions_per_day: number
   time_slots: string[]
+  steps?: StepConfig[]
   is_active: boolean
 }> => {
   const response = await api.get('/new-hire-orientation-config/')
@@ -136,10 +229,6 @@ export const updateNewHireOrientationConfig = async (config: {
   await api.put('/new-hire-orientation-config/', config)
 }
 
-export const getNewHireOrientationTimeSlots = async (): Promise<string[]> => {
-  const response = await api.get('/new-hire-orientation-config/time-slots')
-  return response.data
-}
 
 // Recruiter API
 export const getRecruiterStatus = async (recruiterId: number): Promise<{
@@ -234,9 +323,83 @@ export const updateSessionDocuments = async (
     drug_screen?: boolean
     questions?: boolean
     generated_row?: string
+    status?: string
   }
 ): Promise<void> => {
   await api.patch(`/recruiter/${recruiterId}/sessions/${sessionId}/update`, updateData)
+}
+
+export const getRecruiterByEmail = async (email: string): Promise<{
+  id: number
+  name: string
+  email: string
+  is_active: boolean
+  status: string
+}> => {
+  const response = await api.get(`/recruiter/by-email/${encodeURIComponent(email)}`)
+  return response.data
+}
+
+// CHR API
+export const getCHRCases = async (): Promise<CHRCase[]> => {
+  const response = await api.get('/chr/')
+  return response.data
+}
+
+export const getCHRCase = async (id: number): Promise<CHRCase> => {
+  const response = await api.get(`/chr/${id}`)
+  return response.data
+}
+
+export const createCHRCase = async (data: {
+  candidate_full_name: string
+  bullhorn_id?: string
+  ssn?: string
+  dob?: string
+  info_requested_sent_date?: string
+  submitted_to_district?: string
+  submission_date?: string
+  district_notified?: string
+  current_status?: string
+  final_decision?: string
+  notes?: string
+}): Promise<CHRCase> => {
+  const response = await api.post('/chr/', data)
+  return response.data
+}
+
+export const updateCHRCase = async (
+  id: number,
+  data: {
+    candidate_full_name?: string
+    bullhorn_id?: string
+    ssn?: string
+    dob?: string
+    info_requested_sent_date?: string
+    submitted_to_district?: string
+    submission_date?: string
+    district_notified?: string
+    current_status?: string
+    final_decision?: string
+    notes?: string
+  }
+): Promise<CHRCase> => {
+  const response = await api.patch(`/chr/${id}`, data)
+  return response.data
+}
+
+export const deleteCHRCase = async (id: number): Promise<void> => {
+  await api.delete(`/chr/${id}`)
+}
+
+export const getCHRDashboardStats = async (): Promise<CHRDashboardStats> => {
+  const response = await api.get('/chr/dashboard/stats')
+  return response.data
+}
+
+export const getCHRStatusBreakdown = async (): Promise<CHRStatusBreakdown> => {
+  const response = await api.get('/chr/dashboard/status-breakdown')
+  return response.data
 }
 
 // Auth API
@@ -302,13 +465,21 @@ export const getCompletedInfoSessions = async (): Promise<InfoSessionWithSteps[]
   return response.data
 }
 
-export const getNewHireOrientations = async (): Promise<any[]> => {
-  const response = await api.get('/visits/new-hire-orientation')
-  return response.data
-}
 
 export const getBadges = async (): Promise<any[]> => {
   const response = await api.get('/visits/badges')
+  return response.data
+}
+
+export const registerBadge = async (data: {
+  first_name: string
+  last_name: string
+  email: string
+  phone: string
+  zip_code?: string
+  appointment_time: string
+}): Promise<any> => {
+  const response = await api.post('/visits/badges', data)
   return response.data
 }
 
@@ -317,8 +488,109 @@ export const getFingerprints = async (): Promise<any[]> => {
   return response.data
 }
 
+export const registerFingerprint = async (data: {
+  first_name: string
+  last_name: string
+  email: string
+  phone: string
+  zip_code?: string
+  appointment_time: string
+  fingerprint_type: string
+}): Promise<any> => {
+  const response = await api.post('/visits/fingerprints', data)
+  return response.data
+}
+
 export const getMyVisits = async (): Promise<any[]> => {
   const response = await api.get('/visits/team-visit/my-visits')
+  return response.data
+}
+
+export const getStaffMembers = async (): Promise<Array<{ id: number; name: string; email: string }>> => {
+  const response = await api.get('/visits/team-visit/staff-members')
+  return response.data
+}
+
+export const registerTeamVisit = async (data: {
+  first_name: string
+  last_name: string
+  email: string
+  phone: string
+  team_member_id: number | null
+  reason: string
+}): Promise<any> => {
+  const response = await api.post('/visits/team-visit', data)
+  return response.data
+}
+
+// Statistics API
+export interface StatisticsData {
+  total_info_sessions: number
+  total_new_hire_orientations: number
+  total_visits: number
+  total_badges: number
+  total_fingerprints: number
+  info_sessions_by_status: Record<string, number>
+  new_hire_orientations_by_status: Record<string, number>
+  visits_by_status: Record<string, number>
+  average_completion_time_info_sessions: number | null
+  average_completion_time_new_hire: number | null
+  daily_stats: Array<{
+    date: string
+    info_sessions: number
+    new_hire_orientations: number
+    visits: number
+    badges: number
+    fingerprints: number
+    total: number
+  }>
+  weekly_stats: Array<{
+    week_start: string
+    week_end: string
+    info_sessions: number
+    new_hire_orientations: number
+    visits: number
+    badges: number
+    fingerprints: number
+    total: number
+  }>
+  monthly_stats: Array<{
+    month: string
+    month_start: string
+    month_end: string
+    info_sessions: number
+    new_hire_orientations: number
+    visits: number
+    badges: number
+    fingerprints: number
+    total: number
+  }>
+  heatmap_data: Array<{
+    date: string
+    value: number
+    info_sessions: number
+    new_hire_orientations: number
+    visits: number
+    badges: number
+    fingerprints: number
+  }>
+  time_slot_distribution: Record<string, number>
+  recruiter_performance: Array<{
+    recruiter_id: number
+    recruiter_name: string
+    assigned_sessions: number
+    completed_sessions: number
+    completion_rate: number
+  }>
+}
+
+export const getStatistics = async (period: 'day' | 'week' | 'month' | 'year' | 'all' = 'all'): Promise<StatisticsData> => {
+  const response = await api.get(`/statistics/?period=${period}`)
+  return response.data
+}
+
+export const createStatisticsBackup = async (): Promise<{ message: string; backup_file: string; timestamp: string }> => {
+  const response = await api.post('/statistics/backup')
   return response.data
 }
 

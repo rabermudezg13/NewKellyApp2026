@@ -67,3 +67,4 @@ python main.py
 - Los cambios en la base de datos se aplican automáticamente
 - Las nuevas dependencias son: `pandas` y `openpyxl` para leer archivos Excel
 
+

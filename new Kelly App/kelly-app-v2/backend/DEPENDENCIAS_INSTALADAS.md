@@ -44,3 +44,4 @@ Prueba en tu navegador:
 - El frontend debe estar en el puerto **3025**
 - Para detener el servidor, presiona `Ctrl+C`
 
+

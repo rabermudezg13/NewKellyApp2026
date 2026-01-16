@@ -59,12 +59,6 @@ function HomePage() {
             >
               👤 Staff Login
             </button>
-            <button
-              onClick={() => navigate('/admin/login')}
-              className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-6 rounded-full transition-all transform hover:scale-105 shadow-lg"
-            >
-              🔐 Admin Login
-            </button>
           </div>
         </div>
       </div>

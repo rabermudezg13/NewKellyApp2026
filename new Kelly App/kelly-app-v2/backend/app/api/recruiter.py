@@ -36,6 +36,37 @@ class InfoSessionUpdate(BaseModel):
     status: Optional[str] = None  # "in-progress" or "completed"
     generated_row: Optional[str] = None  # Updated generated row
 
+@router.get("/by-email/{email}", response_model=RecruiterResponse)
+async def get_recruiter_by_email(
+    email: str,
+    db: Session = Depends(get_db)
+):
+    """Get recruiter by email (case-insensitive). Creates recruiter if user exists with recruiter role but recruiter record doesn't exist."""
+    from sqlalchemy import func
+    from app.models.user import User
+    
+    # Search case-insensitive
+    recruiter = db.query(Recruiter).filter(func.lower(Recruiter.email) == func.lower(email)).first()
+    
+    if not recruiter:
+        # Check if user exists with recruiter role
+        user = db.query(User).filter(func.lower(User.email) == func.lower(email)).first()
+        if user and user.role == 'recruiter':
+            # Create recruiter record from user
+            recruiter = Recruiter(
+                name=user.full_name,
+                email=user.email.lower(),  # Normalize to lowercase
+                status="available"
+            )
+            db.add(recruiter)
+            db.commit()
+            db.refresh(recruiter)
+            print(f"✅ Created recruiter record for {user.full_name} ({user.email})")
+        else:
+            raise HTTPException(status_code=404, detail="Recruiter not found")
+    
+    return RecruiterResponse.model_validate(recruiter).model_dump()
+
 @router.get("/{recruiter_id}/status", response_model=RecruiterResponse)
 async def get_recruiter_status(
     recruiter_id: int,
@@ -78,6 +109,38 @@ async def get_assigned_sessions(
     if not recruiter:
         raise HTTPException(status_code=404, detail="Recruiter not found")
     
+    # First, assign recruiters to any unassigned sessions
+    from app.services.recruiter_service import get_next_recruiter, initialize_default_recruiters
+    from datetime import date
+    
+    initialize_default_recruiters(db)
+    
+    # Find all unassigned sessions and assign them
+    unassigned_sessions = db.query(InfoSession).filter(
+        InfoSession.assigned_recruiter_id == None
+    ).all()
+    
+    for session in unassigned_sessions:
+        session_date = session.created_at.date() if session.created_at else date.today()
+        assigned_recruiter = get_next_recruiter(db, session.time_slot, session_date)
+        
+        if assigned_recruiter:
+            session.assigned_recruiter_id = assigned_recruiter.id
+            print(f"✅ Auto-assigned session {session.id} ({session.first_name} {session.last_name}) to {assigned_recruiter.name}")
+        else:
+            # Fallback: get first active recruiter
+            fallback_recruiter = db.query(Recruiter).filter(Recruiter.is_active == True).first()
+            if fallback_recruiter:
+                session.assigned_recruiter_id = fallback_recruiter.id
+                print(f"✅ Auto-assigned session {session.id} ({session.first_name} {session.last_name}) to {fallback_recruiter.name} (fallback)")
+    
+    if unassigned_sessions:
+        db.commit()
+        print(f"✅ Auto-assigned {len(unassigned_sessions)} unassigned sessions")
+    
+    # Debug: Log recruiter info
+    print(f"🔍 Getting sessions for recruiter ID: {recruiter_id}, Name: {recruiter.name}, Email: {recruiter.email}")
+    
     query = db.query(InfoSession).filter(InfoSession.assigned_recruiter_id == recruiter_id)
     
     if status:
@@ -85,8 +148,20 @@ async def get_assigned_sessions(
     
     sessions = query.order_by(InfoSession.created_at.desc()).all()
     
+    # Debug: Log session count and details
+    print(f"📋 Found {len(sessions)} sessions for recruiter {recruiter_id}")
+    for session in sessions:
+        print(f"   - Session ID: {session.id}, Name: {session.first_name} {session.last_name}, Status: {session.status}, Created: {session.created_at}")
+    
     result = []
     for session in sessions:
+        # Get recruiter name if assigned
+        assigned_recruiter_name = None
+        if session.assigned_recruiter_id:
+            assigned_recruiter = db.query(Recruiter).filter(Recruiter.id == session.assigned_recruiter_id).first()
+            if assigned_recruiter:
+                assigned_recruiter_name = assigned_recruiter.name
+        
         session_data = {
             "id": session.id,
             "first_name": session.first_name,
@@ -109,6 +184,8 @@ async def get_assigned_sessions(
             "duration_minutes": session.duration_minutes,
             "created_at": session.created_at.isoformat() if session.created_at else None,
             "generated_row": session.generated_row if session.generated_row else None,
+            "assigned_recruiter_id": session.assigned_recruiter_id,
+            "assigned_recruiter_name": assigned_recruiter_name,
         }
         result.append(session_data)
     
@@ -316,6 +393,8 @@ async def update_session_documents(
         session.questions = update_data.questions
     if update_data.status is not None:
         session.status = update_data.status
+    if update_data.generated_row is not None:
+        session.generated_row = update_data.generated_row
     
     db.commit()
     db.refresh(session)

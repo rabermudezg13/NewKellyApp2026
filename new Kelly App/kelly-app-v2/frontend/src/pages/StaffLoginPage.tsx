@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { login } from '../services/api'
+import { login, getRecruiterByEmail } from '../services/api'
 
 function StaffLoginPage() {
   const navigate = useNavigate()
@@ -23,6 +23,23 @@ function StaffLoginPage() {
       // Redirect based on role
       if (response.user.role === 'admin') {
         navigate('/admin/dashboard')
+      } else if (response.user.role === 'recruiter') {
+        // Recruiters need to access their dashboard via recruiter ID
+        try {
+          const recruiter = await getRecruiterByEmail(email)
+          if (recruiter && recruiter.id) {
+            navigate(`/recruiter/${recruiter.id}/dashboard`)
+          } else {
+            console.error('Recruiter ID not found in response:', recruiter)
+            setError('Unable to find recruiter profile. Please contact administrator.')
+            setLoading(false)
+          }
+        } catch (recruiterErr: any) {
+          // If recruiter not found, show error instead of redirecting
+          console.error('Error fetching recruiter:', recruiterErr)
+          setError(recruiterErr.response?.data?.detail || 'Recruiter profile not found. Please contact administrator.')
+          setLoading(false)
+        }
       } else if (response.user.role === 'staff') {
         navigate('/staff/dashboard')
       } else {
@@ -104,5 +121,6 @@ function StaffLoginPage() {
 }
 
 export default StaffLoginPage
+
 
 

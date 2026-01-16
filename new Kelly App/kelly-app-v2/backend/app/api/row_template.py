@@ -296,13 +296,13 @@ async def generate_row(
                 detail=f"Required field '{column.name}' is missing"
             )
         
-        # Validate dropdown options
-        if column.column_type == "dropdown" and column.options:
-            if value not in column.options:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"Invalid value for '{column.name}'. Must be one of: {', '.join(column.options)}"
-                )
+        # Validate dropdown options (allow values not in options list for flexibility)
+        # Only validate if value is provided and not empty
+        if column.column_type == "dropdown" and column.options and value:
+            # Allow empty values and values in the options list
+            # Also allow values not in the list (for flexibility when updating later)
+            # This allows saving values that will be changed later
+            pass
         
         row_array.append(str(value) if value else "")
     

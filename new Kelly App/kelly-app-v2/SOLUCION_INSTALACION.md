@@ -107,3 +107,4 @@ pip install --no-build-isolation fastapi uvicorn python-dotenv pydantic sqlalche
 *Prueba la Opción 3 primero, es la más simple y debería funcionar.*
 
 
+

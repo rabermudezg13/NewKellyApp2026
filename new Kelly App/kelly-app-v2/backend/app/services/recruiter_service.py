@@ -12,28 +12,55 @@ from datetime import datetime, date
 def get_next_recruiter(db: Session, time_slot: str, session_date: date = None) -> Optional[Recruiter]:
     """
     Get the next recruiter to assign based on equitable distribution
-    Only assigns to available (not busy) recruiters
+    First tries available recruiters, but if none are available, uses all active recruiters
     Uses round-robin approach based on current assignments for the same time slot
+    ALWAYS returns a recruiter - creates default recruiters if none exist
     """
     if session_date is None:
         session_date = date.today()
     
-    # Get all active AND available recruiters (not busy)
+    # Ensure default recruiters exist
+    initialize_default_recruiters(db)
+    
+    # First, try to get all active AND available recruiters (not busy)
     available_recruiters = db.query(Recruiter).filter(
         Recruiter.is_active == True,
         Recruiter.status == "available"
     ).all()
     
+    # If no available recruiters, use all active recruiters (including busy ones)
     if not available_recruiters:
-        return None
+        available_recruiters = db.query(Recruiter).filter(
+            Recruiter.is_active == True
+        ).all()
+    
+    # If still no recruiters, get ANY recruiter (even inactive ones) - we need to assign someone
+    if not available_recruiters:
+        available_recruiters = db.query(Recruiter).all()
+    
+    # If STILL no recruiters exist (shouldn't happen after initialize_default_recruiters), 
+    # create a fallback recruiter
+    if not available_recruiters:
+        print("⚠️ No recruiters found, creating fallback recruiter")
+        fallback_recruiter = Recruiter(
+            name="Default Recruiter",
+            email="recruiter@kellyeducation.com",
+            status="available"
+        )
+        db.add(fallback_recruiter)
+        db.commit()
+        db.refresh(fallback_recruiter)
+        return fallback_recruiter
     
     # Count assignments per recruiter for this time slot and date
+    # Only count active sessions (in-progress or registered), not completed ones
     assignments = {}
     for recruiter in available_recruiters:
         count = db.query(InfoSession).filter(
             InfoSession.assigned_recruiter_id == recruiter.id,
             InfoSession.time_slot == time_slot,
-            func.date(InfoSession.created_at) == session_date
+            func.date(InfoSession.created_at) == session_date,
+            InfoSession.status.in_(["registered", "in-progress"])  # Only count active sessions
         ).count()
         assignments[recruiter.id] = count
     
@@ -47,11 +74,13 @@ def get_next_recruiter(db: Session, time_slot: str, session_date: date = None) -
     # If multiple candidates, use round-robin based on total assignments
     if len(candidates) > 1:
         # Get total assignments across all time slots for today
+        # Only count active sessions (in-progress or registered), not completed ones
         total_assignments = {}
         for recruiter in candidates:
             total = db.query(InfoSession).filter(
                 InfoSession.assigned_recruiter_id == recruiter.id,
-                func.date(InfoSession.created_at) == session_date
+                func.date(InfoSession.created_at) == session_date,
+                InfoSession.status.in_(["registered", "in-progress"])  # Only count active sessions
             ).count()
             total_assignments[recruiter.id] = total
         

@@ -69,3 +69,4 @@ uvicorn main:app --reload --port 3026
 - Sección por sección según prioridades
 
 
+

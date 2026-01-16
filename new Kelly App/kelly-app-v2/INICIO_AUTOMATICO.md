@@ -122,3 +122,4 @@ Verifica que:
 - Las dependencias están instaladas (`pip install -r requirements.txt` y `npm install`)
 
 
+
