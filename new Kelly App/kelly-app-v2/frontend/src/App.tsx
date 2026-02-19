@@ -8,12 +8,18 @@ import BadgePage from './pages/BadgePage'
 import TeamVisitPage from './pages/TeamVisitPage'
 import StaffLoginPage from './pages/StaffLoginPage'
 import StaffDashboard from './pages/StaffDashboard'
+import ManagementDashboard from './pages/ManagementDashboard'
+import FrontdeskDashboard from './pages/FrontdeskDashboard'
+import TalentDashboard from './pages/TalentDashboard'
+import UserDashboard from './pages/UserDashboard'
 import AdminLoginPage from './pages/AdminLoginPage'
 import AdminDashboard from './pages/AdminDashboard'
 import AdminInfoSessionConfig from './pages/AdminInfoSessionConfig'
 import AdminConfigurations from './pages/AdminConfigurations'
 import AdminRowGenerator from './pages/AdminRowGenerator'
 import RecruiterDashboard from './pages/RecruiterDashboard'
+import EventRegistrationPage from './pages/EventRegistrationPage'
+import InfoSessionQuestionsPage from './pages/InfoSessionQuestionsPage'
 import './index.css'
 
 function App() {
@@ -29,12 +35,18 @@ function App() {
         <Route path="/team-visit" element={<TeamVisitPage />} />
         <Route path="/staff/login" element={<StaffLoginPage />} />
         <Route path="/staff/dashboard" element={<StaffDashboard />} />
+        <Route path="/management/dashboard" element={<ManagementDashboard />} />
+        <Route path="/frontdesk/dashboard" element={<FrontdeskDashboard />} />
+        <Route path="/talent/dashboard" element={<TalentDashboard />} />
+        <Route path="/user/dashboard" element={<UserDashboard />} />
         <Route path="/admin/login" element={<AdminLoginPage />} />
         <Route path="/admin/dashboard" element={<AdminDashboard />} />
         <Route path="/admin/info-session-config" element={<AdminInfoSessionConfig />} />
         <Route path="/admin/configurations" element={<AdminConfigurations />} />
         <Route path="/admin/row-generator" element={<AdminRowGenerator />} />
         <Route path="/recruiter/:recruiterId/dashboard" element={<RecruiterDashboard />} />
+        <Route path="/event/:unique_code/register" element={<EventRegistrationPage />} />
+        <Route path="/info-session/:sessionId/questions" element={<InfoSessionQuestionsPage />} />
       </Routes>
     </BrowserRouter>
   )

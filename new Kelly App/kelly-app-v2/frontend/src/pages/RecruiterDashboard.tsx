@@ -9,6 +9,7 @@ import {
   updateSessionDocuments,
   getLiveInfoSessions,
   getInfoSessions,
+  deleteInfoSession,
   downloadAnswersPDF,
   getRowTemplates,
   getRowTemplate,
@@ -20,14 +21,17 @@ import {
   getBadges,
   getMyVisits,
   notifyTeamVisit,
+  getAllRecruiters,
+  reassignSession,
 } from '../services/api'
 import type { AssignedSession, Recruiter, NewHireOrientation, NewHireOrientationWithSteps } from '../types'
 import type { RowTemplate } from '../services/api'
 import { formatMiamiTime, getMiamiDateKey, formatMiamiDateDisplay } from '../utils/dateUtils'
 import CHRPage from './CHRPage'
 import StatisticsDashboard from './StatisticsDashboard'
+import EventManagement from '../components/EventManagement'
 
-type RecruiterTabType = 'sessions' | 'all-info-sessions' | 'new-hire-orientation' | 'fingerprints' | 'badges' | 'my-visits' | 'statistics' | 'chr'
+type RecruiterTabType = 'sessions' | 'all-info-sessions' | 'new-hire-orientation' | 'fingerprints' | 'badges' | 'my-visits' | 'statistics' | 'chr' | 'event'
 
 function RecruiterDashboard() {
   const { recruiterId } = useParams<{ recruiterId: string }>()
@@ -57,7 +61,9 @@ function RecruiterDashboard() {
   const [badges, setBadges] = useState<any[]>([])
   const [myVisits, setMyVisits] = useState<any[]>([])
   const [allInfoSessions, setAllInfoSessions] = useState<any[]>([])
-
+  const [allRecruiters, setAllRecruiters] = useState<Recruiter[]>([])
+  const [showReassignModal, setShowReassignModal] = useState(false)
+  const [selectedNewRecruiter, setSelectedNewRecruiter] = useState<number | null>(null)
   useEffect(() => {
     if (recruiterId) {
       loadData()
@@ -83,6 +89,9 @@ function RecruiterDashboard() {
         const sessionsResponse = await getAssignedSessions(parseInt(recruiterId))
         if (sessionsResponse && sessionsResponse.sessions && Array.isArray(sessionsResponse.sessions)) {
           allSessionsData = sessionsResponse.sessions
+          console.log('🔍 Loaded sessions for My Sessions:', allSessionsData.length)
+          console.log('🔍 First session data:', allSessionsData[0])
+          console.log('🔍 Has is_in_exclusion_list field?', allSessionsData[0]?.is_in_exclusion_list)
         } else if (Array.isArray(sessionsResponse)) {
           // Fallback: if it's already an array, use it directly
           allSessionsData = sessionsResponse
@@ -101,9 +110,11 @@ function RecruiterDashboard() {
       
       try {
         orientationsData = await getNewHireOrientations()
+        console.log('✅ Initial load - New Hire Orientations:', orientationsData?.length || 0)
       } catch (error) {
-        console.error('Error loading orientations:', error)
+        console.error('❌ Error loading orientations:', error)
         // Continue with empty array
+        orientationsData = []
       }
       
       try {
@@ -146,7 +157,15 @@ function RecruiterDashboard() {
         console.error('Error loading all info sessions:', error)
         setAllInfoSessions([])
       }
-      
+
+      try {
+        const recruiters = await getAllRecruiters()
+        setAllRecruiters(recruiters || [])
+      } catch (error) {
+        console.error('Error loading recruiters:', error)
+        setAllRecruiters([])
+      }
+
       // Convert InfoSessionWithSteps to AssignedSession format
       const convertedSessions = allSessionsData.map(session => ({
         id: session.id,
@@ -158,6 +177,8 @@ function RecruiterDashboard() {
         session_type: session.session_type,
         time_slot: session.time_slot,
         status: session.status,
+        is_in_exclusion_list: session.is_in_exclusion_list || false,
+        exclusion_warning_shown: session.exclusion_warning_shown || false,
         ob365_sent: session.ob365_sent || false,
         i9_sent: session.i9_sent || false,
         existing_i9: session.existing_i9 || false,
@@ -172,6 +193,8 @@ function RecruiterDashboard() {
         assigned_recruiter_id: session.assigned_recruiter_id,
         assigned_recruiter_name: session.assigned_recruiter_name,
         generated_row: null, // Will be loaded separately if needed
+        is_duplicate: session.is_duplicate || false,
+        duplicate_count: session.duplicate_count || 1,
       }))
       // Sort by created_at descending (newest first)
       convertedSessions.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
@@ -185,24 +208,20 @@ function RecruiterDashboard() {
       
       setNewHireOrientations(orientationsData)
       setFingerprints(fingerprintsData)
-      
-      // Update selected session if it exists
+
+      // Update selected session if it exists, but DON'T reset documentStatus or sessionRowData
+      // to prevent checkbox jumping and losing row generator data when user is actively interacting with the modal
       if (selectedSession) {
         const updatedSession = convertedSessions.find(s => s.id === selectedSession.id)
         if (updatedSession) {
           setSelectedSession(updatedSession)
-          setDocumentStatus({
-            ob365_sent: updatedSession.ob365_sent,
-            i9_sent: updatedSession.i9_sent,
-            existing_i9: updatedSession.existing_i9,
-            ineligible: updatedSession.ineligible,
-            rejected: updatedSession.rejected,
-            drug_screen: updatedSession.drug_screen,
-            questions: updatedSession.questions,
-          })
-          
+          // Do NOT update documentStatus here - user might be actively checking boxes
+          // Do NOT update sessionRowData or sessionGeneratedRow - user might be editing the row
+          // The current state should be preserved until modal is closed
         }
       }
+
+      return convertedSessions
     } catch (error: any) {
       console.error('Error loading data:', error)
       console.error('Error details:', error.response?.data)
@@ -274,8 +293,10 @@ function RecruiterDashboard() {
       let orientationsData: any[] = []
       if (orientationsResult.status === 'fulfilled' && Array.isArray(orientationsResult.value)) {
         orientationsData = orientationsResult.value
+        console.log('✅ Loaded New Hire Orientations:', orientationsData.length)
       } else {
-        console.error('Error loading orientations:', orientationsResult.reason)
+        console.error('❌ Error loading orientations:', orientationsResult.reason)
+        orientationsData = []
       }
       
       let fingerprintsData: any[] = []
@@ -314,6 +335,8 @@ function RecruiterDashboard() {
         session_type: session.session_type,
         time_slot: session.time_slot,
         status: session.status,
+        is_in_exclusion_list: session.is_in_exclusion_list || false,
+        exclusion_warning_shown: session.exclusion_warning_shown || false,
         ob365_sent: session.ob365_sent || false,
         i9_sent: session.i9_sent || false,
         existing_i9: session.existing_i9 || false,
@@ -327,28 +350,24 @@ function RecruiterDashboard() {
         assigned_recruiter_id: session.assigned_recruiter_id,
         assigned_recruiter_name: session.assigned_recruiter_name,
         generated_row: session.generated_row || null,
-        created_at: session.created_at
+        created_at: session.created_at,
+        is_duplicate: session.is_duplicate || false,
+        duplicate_count: session.duplicate_count || 1,
       }))
-      
+
       setSessions(convertedSessions)
       setTemplates(templatesData)
       setNewHireOrientations(orientationsData)
       setFingerprints(fingerprintsData)
-      
-      // Update selected session if it exists
+
+      // Update selected session if it exists, but DON'T update documentStatus
+      // to prevent checkbox jumping during background refresh
       if (selectedSession) {
         const updatedSession = convertedSessions.find(s => s.id === selectedSession.id)
         if (updatedSession) {
           setSelectedSession(updatedSession)
-          setDocumentStatus({
-            ob365_sent: updatedSession.ob365_sent,
-            i9_sent: updatedSession.i9_sent,
-            existing_i9: updatedSession.existing_i9,
-            ineligible: updatedSession.ineligible,
-            rejected: updatedSession.rejected,
-            drug_screen: updatedSession.drug_screen,
-            questions: updatedSession.questions,
-          })
+          // Do NOT update documentStatus here - user might be actively checking boxes
+          // Only update it when explicitly saved or when modal is first opened
         }
       }
     } catch (error: any) {
@@ -375,12 +394,13 @@ function RecruiterDashboard() {
     const timeout = setTimeout(() => {
       intervalId = setInterval(() => {
         refreshDataInBackground()
-      }, 30000) // Reload every 30 seconds
-    }, 5000) // Start refreshing 5 seconds after initial load
+      }, 10000) // Reload every 10 seconds (more frequent to catch new registrations)
+    }, 3000) // Start refreshing 3 seconds after initial load
     return () => {
       clearTimeout(timeout)
       if (intervalId) clearInterval(intervalId)
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [recruiterId])
 
   const handleStatusToggle = async () => {
@@ -448,8 +468,46 @@ function RecruiterDashboard() {
   const handleCompleteSession = async () => {
     if (!selectedSession || !recruiterId) return
     try {
-      await completeSession(parseInt(recruiterId), selectedSession.id, documentStatus)
-      await loadData()
+      // Only send fields that are explicitly set (not false by default)
+      // Filter out false values to avoid sending unnecessary data
+      const cleanDocumentStatus: {
+        ob365_sent?: boolean
+        i9_sent?: boolean
+        existing_i9?: boolean
+        ineligible?: boolean
+        rejected?: boolean
+        drug_screen?: boolean
+        questions?: boolean
+      } = {}
+      
+      // Only include fields that are true (explicitly checked)
+      if (documentStatus.ob365_sent) cleanDocumentStatus.ob365_sent = true
+      if (documentStatus.i9_sent) cleanDocumentStatus.i9_sent = true
+      if (documentStatus.existing_i9) cleanDocumentStatus.existing_i9 = true
+      if (documentStatus.ineligible) cleanDocumentStatus.ineligible = true
+      if (documentStatus.rejected) cleanDocumentStatus.rejected = true
+      if (documentStatus.drug_screen) cleanDocumentStatus.drug_screen = true
+      if (documentStatus.questions) cleanDocumentStatus.questions = true
+      
+      console.log('📤 Completing session:', {
+        sessionId: selectedSession.id,
+        recruiterId: parseInt(recruiterId),
+        documentStatus: cleanDocumentStatus
+      })
+      
+      // Optimistically update the local state immediately
+      setSessions(prevSessions => 
+        prevSessions.map(session => 
+          session.id === selectedSession.id 
+            ? { ...session, status: 'completed' as const }
+            : session
+        )
+      )
+      
+      const result = await completeSession(parseInt(recruiterId), selectedSession.id, cleanDocumentStatus)
+      console.log('✅ Session completed, result:', result)
+      
+      // Close the modal immediately
       setSelectedSession(null)
       setDocumentStatus({
         ob365_sent: false,
@@ -460,10 +518,46 @@ function RecruiterDashboard() {
         drug_screen: false,
         questions: false,
       })
-      alert('Session completed!')
-    } catch (error) {
-      console.error('Error completing session:', error)
-      alert('Error completing session')
+      
+      // Force refresh all data to get updated status from server
+      await loadData()
+      
+      alert('Session completed! Status updated to "completed".')
+    } catch (error: any) {
+      console.error('❌ Error completing session:', error)
+      console.error('Error type:', typeof error)
+      console.error('Error constructor:', error?.constructor?.name)
+      console.error('Error response:', error.response)
+      console.error('Error originalError:', error.originalError)
+      console.error('Error details:', error.response?.data || error.message)
+      console.error('Error status:', error.response?.status)
+      console.error('Error message:', error.message)
+      console.error('Full error object:', JSON.stringify(error, null, 2))
+      
+      // Revert optimistic update on error
+      setSessions(prevSessions => 
+        prevSessions.map(session => 
+          session.id === selectedSession.id 
+            ? { ...session, status: selectedSession.status }
+            : session
+        )
+      )
+      
+      // Extract error message from various possible locations
+      let errorMessage = 'Unknown error'
+      if (error.message && error.message !== 'Unknown error') {
+        errorMessage = error.message
+      } else if (error.response?.data?.detail) {
+        errorMessage = error.response.data.detail
+      } else if (error.response?.data?.message) {
+        errorMessage = error.response.data.message
+      } else if (error.originalError?.message) {
+        errorMessage = error.originalError.message
+      } else if (typeof error === 'string') {
+        errorMessage = error
+      }
+      
+      alert(`Error completing session: ${errorMessage}`)
     }
   }
 
@@ -471,11 +565,28 @@ function RecruiterDashboard() {
     if (!selectedSession || !recruiterId) return
     try {
       await updateSessionDocuments(parseInt(recruiterId), selectedSession.id, documentStatus)
+
+      // Reload data - loadData() now preserves sessionRowData and sessionGeneratedRow automatically
       await loadData()
+
       alert('Documents updated!')
     } catch (error) {
       console.error('Error updating documents:', error)
       alert('Error updating documents')
+    }
+  }
+
+  const handleReassignSession = async () => {
+    if (!selectedSession || !recruiterId || !selectedNewRecruiter) return
+    try {
+      await reassignSession(parseInt(recruiterId), selectedSession.id, selectedNewRecruiter)
+      await loadData()
+      setShowReassignModal(false)
+      setSelectedSession(null)
+      alert('Session reassigned successfully!')
+    } catch (error) {
+      console.error('Error reassigning session:', error)
+      alert('Error reassigning session')
     }
   }
 
@@ -511,18 +622,56 @@ function RecruiterDashboard() {
   const renderAllInfoSessions = () => {
     if (loading) return <p className="text-center py-8">Loading...</p>
     
-    // Group sessions by date
+    // Group sessions by date and time slot
     const groupedSessions: { [key: string]: any[] } = {}
     allInfoSessions.forEach((session) => {
       const dateKey = getMiamiDateKey(session.created_at)
-      if (!groupedSessions[dateKey]) {
-        groupedSessions[dateKey] = []
+      const groupKey = `${dateKey}_${session.time_slot}`
+      if (!groupedSessions[groupKey]) {
+        groupedSessions[groupKey] = []
       }
-      groupedSessions[dateKey].push(session)
+      groupedSessions[groupKey].push(session)
     })
     
-    // Sort date keys (most recent first)
-    const sortedDateKeys = Object.keys(groupedSessions).sort().reverse()
+    // Sort group keys (most recent first, then by time slot)
+    const sortedGroupKeys = Object.keys(groupedSessions).sort((a, b) => {
+      const parts_a = a.split('_')
+      const parts_b = b.split('_')
+      const dateA = parts_a[0]
+      const dateB = parts_b[0]
+      // Get everything after the first underscore as the time slot
+      const timeA = parts_a.slice(1).join('_')
+      const timeB = parts_b.slice(1).join('_')
+
+      console.log(`🔍 Key A: "${a}" -> date: "${dateA}", time: "${timeA}"`)
+      console.log(`🔍 Key B: "${b}" -> date: "${dateB}", time: "${timeB}"`)
+
+      if (dateA !== dateB) {
+        return dateB.localeCompare(dateA) // Most recent first
+      }
+      // Same date, sort by time slot chronologically (earliest first)
+      const parseTime = (timeStr: string) => {
+        if (!timeStr) return 0
+        const match = timeStr.match(/(\d+):(\d+)\s*(AM|PM)/i)
+        if (!match) {
+          console.log('⚠️ Failed to parse time:', timeStr)
+          return 0
+        }
+        let hours = parseInt(match[1])
+        const minutes = parseInt(match[2])
+        const period = match[3].toUpperCase()
+        if (period === 'PM' && hours !== 12) hours += 12
+        if (period === 'AM' && hours === 12) hours = 0
+        const totalMinutes = hours * 60 + minutes
+        console.log(`🕐 Parsed time "${timeStr}": ${hours}:${minutes} ${period} = ${totalMinutes} minutes`)
+        return totalMinutes
+      }
+      const timeAMinutes = parseTime(timeA)
+      const timeBMinutes = parseTime(timeB)
+      const comparison = timeBMinutes - timeAMinutes // Inverted: latest time first (1:30 PM, 10:00 AM, 8:30 AM)
+      console.log(`📊 Final comparison: "${timeA}" (${timeAMinutes} min) vs "${timeB}" (${timeBMinutes} min) = ${comparison}`)
+      return comparison
+    })
     
     return (
       <div className="space-y-4">
@@ -563,38 +712,99 @@ function RecruiterDashboard() {
                   <th className="px-4 py-2 text-left">Registered At</th>
                   <th className="px-4 py-2 text-left">Assigned Recruiter</th>
                   <th className="px-4 py-2 text-left">Status</th>
+                  <th className="px-4 py-2 text-left">Actions</th>
                 </tr>
               </thead>
               <tbody>
-                {sortedDateKeys.map((dateKey, dateIndex) => {
-                  const sessionsForDate = groupedSessions[dateKey]
+                {sortedGroupKeys.map((groupKey, groupIndex) => {
+                  const sessionsForGroup = groupedSessions[groupKey]
+                  const [dateKey, timeSlot] = groupKey.split('_')
+                  const firstSession = sessionsForGroup[0]
+                  const isMorning = timeSlot === '8:30 AM'
+
+                  // Check if this is a new date (different from previous group)
+                  const isNewDate = groupIndex === 0 ||
+                    dateKey !== sortedGroupKeys[groupIndex - 1].split('_')[0]
+
                   return (
-                    <React.Fragment key={dateKey}>
-                      {dateIndex > 0 && (
+                    <React.Fragment key={groupKey}>
+                      {/* Date Separator Row - Show when starting a new date */}
+                      {isNewDate && (
                         <tr>
-                          <td colSpan={9} className="px-4 py-3 bg-gray-100 border-t-2 border-gray-300">
-                            <div className="text-center">
-                              <span className="text-gray-700 font-bold text-lg">
-                                ─── {formatMiamiDateDisplay(sessionsForDate[0].created_at)} ───
-                              </span>
+                          <td colSpan={10} className="px-0 py-0">
+                            <div
+                              className="bg-gradient-to-r from-blue-600 to-purple-600 text-white px-6 py-3"
+                              style={{
+                                fontSize: '1.25rem',
+                                fontWeight: 'bold',
+                                textAlign: 'center',
+                                borderTop: groupIndex > 0 ? '4px solid #e5e7eb' : 'none',
+                                marginTop: groupIndex > 0 ? '1rem' : '0'
+                              }}
+                            >
+                              📅 {formatMiamiDateDisplay(firstSession.created_at)}
                             </div>
                           </td>
                         </tr>
                       )}
-                      {sessionsForDate.map((session, sessionIndex) => (
-                        <tr key={session.id} className={`border-b hover:bg-gray-50 ${
-                          session.assigned_recruiter_id === parseInt(recruiterId || '0') ? 'bg-blue-50' : ''
-                        }`}>
+                      {/* Group Header - Time Slot and Session Type */}
+                      <tr>
+                        <td colSpan={10} className={`px-4 py-4 ${isMorning ? 'bg-blue-200' : 'bg-green-200'} border-t-2 ${isMorning ? 'border-blue-400' : 'border-green-400'} border-b-2`}>
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-4">
+                              <span className={`px-3 py-1 rounded-lg font-bold text-lg ${isMorning ? 'bg-blue-600 text-white' : 'bg-green-600 text-white'}`}>
+                                ⏰ {timeSlot}
+                              </span>
+                              <span className="text-gray-600 font-semibold">
+                                {firstSession.session_type === 'new-hire' ? '📋 New Hire' : '🔄 Reactivation'}
+                              </span>
+                            </div>
+                            <span className="text-gray-700 font-semibold">
+                              {sessionsForGroup.length} {sessionsForGroup.length === 1 ? 'session' : 'sessions'}
+                            </span>
+                          </div>
+                        </td>
+                      </tr>
+                      {sessionsForGroup.map((session, sessionIndex) => {
+                        // Color based on status first, then time slot
+                        const isCompleted = session.status === 'completed'
+                        const isMorning = session.time_slot === '8:30 AM'
+                        const rowBgColor = isCompleted 
+                          ? 'bg-green-100 hover:bg-green-200 border-green-300' 
+                          : isMorning 
+                            ? 'bg-blue-50 hover:bg-blue-100' 
+                            : 'bg-green-50 hover:bg-green-100'
+
+                        return (
+                        <tr key={session.id} className={`border-b ${rowBgColor}`}>
                           <td className="px-4 py-2 font-semibold text-gray-600">
                             {sessionIndex + 1}
                           </td>
                           <td className="px-4 py-2 font-semibold">
-                            {session.first_name} {session.last_name}
+                            <div className="flex items-center gap-2">
+                              <span>{session.first_name} {session.last_name}</span>
+                              {(session as any).is_duplicate && (
+                                <span className="px-2 py-1 bg-orange-500 text-white text-xs font-bold rounded" title={`⚠️ DUPLICATE - Registered ${(session as any).duplicate_count} times`}>
+                                  ⚠️ DUPLICATE ({(session as any).duplicate_count}x)
+                                </span>
+                              )}
+                              {session.is_in_exclusion_list && (
+                                <span className="px-2 py-1 bg-red-600 text-white text-xs font-bold rounded" title="⚠️ IN PC/RR EXCLUSION LIST">
+                                  ⚠️ PC/RR
+                                </span>
+                              )}
+                            </div>
                           </td>
                           <td className="px-4 py-2">{session.email}</td>
                           <td className="px-4 py-2">{session.phone}</td>
                           <td className="px-4 py-2">{session.zip_code}</td>
-                          <td className="px-4 py-2">{session.time_slot}</td>
+                          <td className="px-4 py-2">
+                            <span className={`px-2 py-1 rounded text-sm font-semibold ${
+                              session.time_slot === '8:30 AM' ? 'bg-blue-200 text-blue-900' : 'bg-green-200 text-green-900'
+                            }`}>
+                              {session.time_slot}
+                            </span>
+                          </td>
                           <td className="px-4 py-2">
                             <span className="text-gray-700 text-sm">
                               {formatMiamiTime(session.created_at)}
@@ -618,18 +828,53 @@ function RecruiterDashboard() {
                             )}
                           </td>
                           <td className="px-4 py-2">
-                            <span className={`px-2 py-1 rounded text-sm ${
-                              session.status === 'completed' 
-                                ? 'bg-green-100 text-green-800' 
+                            <span className={`px-2 py-1 rounded text-sm font-semibold ${
+                              session.status === 'completed'
+                                ? 'bg-green-500 text-white'
+                                : session.status === 'interview_in_progress'
+                                ? 'bg-purple-100 text-purple-800'
+                                : session.status === 'answers_submitted'
+                                ? 'bg-teal-100 text-teal-800'
+                                : session.status === 'initiated'
+                                ? 'bg-orange-100 text-orange-800'
                                 : session.status === 'in-progress'
                                 ? 'bg-yellow-100 text-yellow-800'
                                 : 'bg-blue-100 text-blue-800'
                             }`}>
-                              {session.status}
+                              {session.status === 'completed' ? '✓ Completed' : session.status}
                             </span>
                           </td>
+                          <td className="px-4 py-2">
+                            <button
+                              onClick={async (e) => {
+                                e.stopPropagation()
+                                const confirmed = window.confirm(
+                                  `Are you sure you want to delete the registration for ${session.first_name} ${session.last_name}?\n\nThis action cannot be undone.`
+                                )
+                                if (confirmed) {
+                                  try {
+                                    await deleteInfoSession(session.id)
+                                    alert('Registration deleted successfully')
+                                    // Reload data
+                                    await loadData()
+                                    // Also refresh all info sessions
+                                    const allSessions = await getInfoSessions()
+                                    setAllInfoSessions(allSessions || [])
+                                  } catch (error: any) {
+                                    console.error('Error deleting session:', error)
+                                    alert(`Error deleting registration: ${error.response?.data?.detail || error.message || 'Unknown error'}`)
+                                  }
+                                }
+                              }}
+                              className="px-3 py-1 bg-red-600 text-white rounded hover:bg-red-700 text-sm font-semibold transition-colors"
+                              title="Delete registration"
+                            >
+                              🗑️ Delete
+                            </button>
+                          </td>
                         </tr>
-                      ))}
+                        )
+                      })}
                     </React.Fragment>
                   )
                 })}
@@ -657,10 +902,20 @@ function RecruiterDashboard() {
     // Sort date keys (most recent first)
     const sortedDateKeys = Object.keys(groupedVisits).sort().reverse()
     
+    // Count unread/pending visits
+    const unreadVisits = myVisits.filter(v => v.status === 'pending')
+    
     return (
       <div className="space-y-4">
         <div className="bg-blue-50 border-l-4 border-blue-500 p-4 mb-4 flex justify-between items-center">
-          <p className="text-blue-800 font-bold">👥 My Visits</p>
+          <div className="flex items-center gap-3">
+            <p className="text-blue-800 font-bold">👥 My Visits</p>
+            {unreadVisits.length > 0 && (
+              <span className="bg-red-600 text-white px-3 py-1 rounded-full text-sm font-bold animate-pulse">
+                🔔 {unreadVisits.length} New
+              </span>
+            )}
+          </div>
           <button
             onClick={async () => {
               try {
@@ -1031,8 +1286,27 @@ function RecruiterDashboard() {
     
     return (
       <div className="space-y-4">
-        <div className="bg-blue-50 border-l-4 border-blue-500 p-4 mb-4">
+        <div className="bg-blue-50 border-l-4 border-blue-500 p-4 mb-4 flex justify-between items-center">
           <p className="text-blue-800 font-bold">🎓 New Hire Orientations</p>
+          <button
+            onClick={async () => {
+              try {
+                setLoading(true)
+                const orientationsData = await getNewHireOrientations()
+                setNewHireOrientations(orientationsData || [])
+                console.log('✅ Refreshed New Hire Orientations:', orientationsData?.length || 0)
+                alert(`Refreshed! Found ${orientationsData?.length || 0} orientations.`)
+              } catch (error) {
+                console.error('Error refreshing orientations:', error)
+                alert('Error refreshing data')
+              } finally {
+                setLoading(false)
+              }
+            }}
+            className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 text-sm font-semibold"
+          >
+            🔄 Refresh
+          </button>
         </div>
         {newHireOrientations.length === 0 ? (
           <p className="text-center py-8 text-gray-500">No new hire orientations registered</p>
@@ -1122,11 +1396,19 @@ function RecruiterDashboard() {
       questions: session.questions,
     })
     
+    // Ensure template is selected - use first template if none selected
+    let templateToUse = selectedTemplate
+    if (!templateToUse && templates.length > 0) {
+      templateToUse = templates[0]
+      setSelectedTemplate(templates[0])
+      console.log('✅ Auto-selected first template:', templates[0].name)
+    }
+    
     // Load row data if session has a generated_row
-    if (session.generated_row && selectedTemplate) {
+    if (session.generated_row && templateToUse) {
       setSessionGeneratedRow(session.generated_row)
       loadRowDataFromGeneratedRow(session.generated_row, session)
-    } else if ((session.status === 'in-progress' || session.status === 'registered' || session.status === 'completed') && session.started_at && selectedTemplate) {
+    } else if ((session.status === 'in-progress' || session.status === 'registered' || session.status === 'completed' || session.status === 'initiated' || session.status === 'interview_in_progress' || session.status === 'answers_submitted') && templateToUse) {
       // If no generated_row exists but session is in-progress, generate initial data
       const initialData: Record<string, any> = {}
       
@@ -1141,12 +1423,17 @@ function RecruiterDashboard() {
         }
       }
       
-      selectedTemplate.columns.forEach((col) => {
+      templateToUse.columns.forEach((col) => {
         const colNameLower = col.name.toLowerCase().trim()
         const colNameUpper = col.name.toUpperCase().trim()
         
+        // Map Talent Email FIRST (before date/number checks) - exact match or contains both "talent" and "email"
+        if (colNameLower === 'talent email' || (colNameLower.includes('talent') && colNameLower.includes('email'))) {
+          initialData[col.name] = session.email
+          console.log('✅ Mapped Talent Email:', col.name, '→', session.email)
+        }
         // Leave FP expiration date blank
-        if (colNameLower.includes('fp') && colNameLower.includes('expiration')) {
+        else if (colNameLower.includes('fp') && colNameLower.includes('expiration')) {
           initialData[col.name] = ''  // Leave blank
         } 
         // Map Applicant Name
@@ -1157,23 +1444,19 @@ function RecruiterDashboard() {
         else if (colNameLower === 'talent phone' || (colNameLower.includes('talent') && colNameLower.includes('phone'))) {
           initialData[col.name] = session.phone
         } 
-        // Map Talent Email
-        else if (colNameLower === 'talent email' || (colNameLower.includes('talent') && colNameLower.includes('email'))) {
-          initialData[col.name] = session.email
-        } 
         // Fallback for other phone/numero patterns
         else if (colNameLower.includes('numero') || (colNameLower.includes('phone') && colNameLower.includes('numero'))) {
           initialData[col.name] = session.phone
         } 
-        // Fallback for other email patterns
-        else if (colNameLower.includes('email') && !colNameLower.includes('talent')) {
+        // Fallback for other email patterns - but exclude "Onboarding Introduction Email" and ensure it's not a date/number field
+        else if (colNameLower.includes('email') && !colNameLower.includes('talent') && !colNameLower.includes('onboarding introduction') && col.column_type !== 'date' && col.column_type !== 'number') {
           initialData[col.name] = session.email
         } 
         // Map recruiter initials to R and O columns
         else if (colNameUpper === 'R' || colNameUpper === 'O') {
           initialData[col.name] = recruiterInitials
         } 
-        // Set date fields to today
+        // Set date fields to today (only if not already set)
         else if (col.column_type === 'date') {
           initialData[col.name] = new Date().toISOString().split('T')[0]
         } 
@@ -1194,7 +1477,120 @@ function RecruiterDashboard() {
       setSessionGeneratedRow('')
       setSessionRowData({})
     }
+    
+    // Log what was loaded for debugging
+    console.log('📊 Session details opened:', {
+      sessionId: session.id,
+      status: session.status,
+      hasGeneratedRow: !!session.generated_row,
+      templateToUse: templateToUse?.name || 'none',
+      sessionRowDataKeys: Object.keys(sessionRowData).length
+    })
   }
+  
+  // Effect to initialize row data when session or template changes
+  useEffect(() => {
+    if (!selectedSession || !templates.length) {
+      console.log('⚠️ useEffect skip - selectedSession:', !!selectedSession, 'templates.length:', templates.length)
+      return
+    }
+    
+    // Ensure template is selected
+    const templateToUse = selectedTemplate || templates[0]
+    if (!templateToUse) {
+      console.log('⚠️ useEffect skip - no template available')
+      return
+    }
+    
+    // Only initialize if sessionRowData is empty and session is in valid status
+    const shouldHaveRowData = selectedSession.status === 'in-progress' ||
+                               selectedSession.status === 'registered' ||
+                               selectedSession.status === 'completed' ||
+                               selectedSession.status === 'initiated' ||
+                               selectedSession.status === 'interview_in_progress' ||
+                               selectedSession.status === 'answers_submitted'
+    
+    const hasRowData = Object.keys(sessionRowData).length > 0
+    console.log('🔍 useEffect check:', {
+      sessionId: selectedSession.id,
+      status: selectedSession.status,
+      shouldHaveRowData,
+      hasRowData,
+      template: templateToUse.name
+    })
+    
+    if (shouldHaveRowData && !hasRowData) {
+      console.log('🔄 Initializing row data from useEffect - session:', selectedSession.id, 'template:', templateToUse.name)
+      
+      // Generate initial data
+      const initialData: Record<string, any> = {}
+      
+      // Get recruiter initials
+      let recruiterInitials = ''
+      if (recruiter) {
+        const nameParts = recruiter.name.split(' ')
+        if (nameParts.length >= 2) {
+          recruiterInitials = nameParts[0][0].toUpperCase() + nameParts[nameParts.length - 1][0].toUpperCase()
+        } else if (nameParts.length === 1) {
+          recruiterInitials = nameParts[0][0].toUpperCase()
+        }
+      }
+      
+      templateToUse.columns.forEach((col) => {
+        const colNameLower = col.name.toLowerCase().trim()
+        const colNameUpper = col.name.toUpperCase().trim()
+        
+        // Map Talent Email FIRST (before date/number checks) - exact match or contains both "talent" and "email"
+        if (colNameLower === 'talent email' || (colNameLower.includes('talent') && colNameLower.includes('email'))) {
+          initialData[col.name] = selectedSession.email
+          console.log('✅ Mapped Talent Email:', col.name, '→', selectedSession.email)
+        }
+        // Leave FP expiration date blank
+        else if (colNameLower.includes('fp') && colNameLower.includes('expiration')) {
+          initialData[col.name] = ''
+        } 
+        // Map Applicant Name
+        else if (colNameLower === 'applicant name' || (colNameLower.includes('applicant') && colNameLower.includes('name'))) {
+          initialData[col.name] = `${selectedSession.first_name} ${selectedSession.last_name}`
+        } 
+        // Map Talent Phone
+        else if (colNameLower === 'talent phone' || (colNameLower.includes('talent') && colNameLower.includes('phone'))) {
+          initialData[col.name] = selectedSession.phone
+        } 
+        // Fallback for other phone/numero patterns
+        else if (colNameLower.includes('numero') || (colNameLower.includes('phone') && colNameLower.includes('numero'))) {
+          initialData[col.name] = selectedSession.phone
+        } 
+        // Fallback for other email patterns - but exclude "Onboarding Introduction Email" and ensure it's not a date/number field
+        else if (colNameLower.includes('email') && !colNameLower.includes('talent') && !colNameLower.includes('onboarding introduction') && col.column_type !== 'date' && col.column_type !== 'number') {
+          initialData[col.name] = selectedSession.email
+        } 
+        // Map recruiter initials to R and O columns
+        else if (colNameUpper === 'R' || colNameUpper === 'O') {
+          initialData[col.name] = recruiterInitials
+        } 
+        // Set date fields to today (only if not already set)
+        else if (col.column_type === 'date') {
+          initialData[col.name] = new Date().toISOString().split('T')[0]
+        } 
+        // Use default value for other fields
+        else {
+          initialData[col.name] = col.default_value || ''
+        }
+      })
+      
+      setSessionRowData(initialData)
+      
+      // Also ensure template is selected
+      if (!selectedTemplate) {
+        setSelectedTemplate(templateToUse)
+      }
+      
+      console.log('✅ Row data initialized:', Object.keys(initialData).length, 'columns', 'Keys:', Object.keys(initialData).slice(0, 5))
+    } else {
+      console.log('⏭️ useEffect skip - already has row data or status not valid')
+    }
+  }, [selectedSession?.id, templates.length, selectedTemplate?.id, recruiter?.id, sessionRowData])
 
   const loadRowDataFromGeneratedRow = (rowText: string, session: AssignedSession) => {
     if (!selectedTemplate) {
@@ -1245,9 +1641,21 @@ function RecruiterDashboard() {
   }
 
   const ensureSessionDataInRow = (rowData: Record<string, any>, session: AssignedSession, template: RowTemplate) => {
+    // Get recruiter initials
+    let recruiterInitials = ''
+    if (recruiter) {
+      const nameParts = recruiter.name.split(' ')
+      if (nameParts.length >= 2) {
+        recruiterInitials = nameParts[0][0].toUpperCase() + nameParts[nameParts.length - 1][0].toUpperCase()
+      } else if (nameParts.length === 1) {
+        recruiterInitials = nameParts[0][0].toUpperCase()
+      }
+    }
+
     template.columns.forEach((col) => {
       const colNameLower = col.name.toLowerCase().trim()
-      
+      const colNameUpper = col.name.toUpperCase().trim()
+
       // Ensure Applicant Name is set
       if (colNameLower === 'applicant name' || (colNameLower.includes('applicant') && colNameLower.includes('name'))) {
         rowData[col.name] = `${session.first_name} ${session.last_name}`
@@ -1260,11 +1668,30 @@ function RecruiterDashboard() {
       else if (colNameLower === 'talent email' || (colNameLower.includes('talent') && colNameLower.includes('email'))) {
         rowData[col.name] = session.email
       }
+      // Ensure recruiter initials are in columns R and O
+      else if ((colNameUpper === 'R' || colNameUpper === 'O') && !rowData[col.name]) {
+        rowData[col.name] = recruiterInitials
+      }
+      // Fallback for other phone/numero patterns
+      else if ((colNameLower.includes('numero') || (colNameLower.includes('phone') && colNameLower.includes('numero'))) && !rowData[col.name]) {
+        rowData[col.name] = session.phone
+      }
+      // Fallback for other email patterns - but exclude "Onboarding Introduction Email"
+      else if (colNameLower.includes('email') && !colNameLower.includes('talent') && !colNameLower.includes('onboarding introduction') && !rowData[col.name]) {
+        rowData[col.name] = session.email
+      }
     })
   }
 
   const handleUpdateSessionRow = async () => {
-    if (!selectedTemplate || !selectedSession || !recruiterId) return
+    // Use selectedTemplate or first available template
+    const templateToUse = selectedTemplate || (templates.length > 0 ? templates[0] : null)
+    if (!templateToUse || !selectedSession || !recruiterId) {
+      if (!templateToUse) {
+        alert('No row template available. Please contact admin to create a template.')
+      }
+      return
+    }
     
     try {
       // Get recruiter initials
@@ -1281,13 +1708,13 @@ function RecruiterDashboard() {
       const currentDate = new Date().toISOString().split('T')[0]
       const dataToSend: Record<string, any> = { ...sessionRowData }
       
-      selectedTemplate.columns.forEach((col) => {
+      templateToUse.columns.forEach((col) => {
         const colNameUpper = col.name.toUpperCase().trim()
         const colNameLower = col.name.toLowerCase().trim()
-        
-        // Leave FP expiration date blank
+
+        // Keep FP expiration date if it already exists in sessionRowData, otherwise leave blank
         if (colNameLower.includes('fp') && colNameLower.includes('expiration')) {
-          dataToSend[col.name] = ''  // Always leave blank
+          dataToSend[col.name] = sessionRowData[col.name] || ''  // Preserve if exists, otherwise blank
         }
         // Ensure Applicant Name is always set
         else if (colNameLower === 'applicant name' || (colNameLower.includes('applicant') && colNameLower.includes('name'))) {
@@ -1309,8 +1736,8 @@ function RecruiterDashboard() {
         else if ((colNameLower.includes('numero') || (colNameLower.includes('phone') && colNameLower.includes('numero'))) && !dataToSend[col.name]) {
           dataToSend[col.name] = selectedSession.phone
         }
-        // Fallback for other email patterns
-        else if (colNameLower.includes('email') && !colNameLower.includes('talent') && !dataToSend[col.name]) {
+        // Fallback for other email patterns - but exclude "Onboarding Introduction Email"
+        else if (colNameLower.includes('email') && !colNameLower.includes('talent') && !colNameLower.includes('onboarding introduction') && !dataToSend[col.name]) {
           dataToSend[col.name] = selectedSession.email
         }
         else if (col.column_type === 'date' && !dataToSend[col.name]) {
@@ -1318,7 +1745,7 @@ function RecruiterDashboard() {
         }
       })
       
-      const result = await generateRow(selectedTemplate.id, dataToSend)
+      const result = await generateRow(templateToUse.id, dataToSend)
       setSessionGeneratedRow(result.row_text)
       setSessionRowCopied(false)
       
@@ -1514,6 +1941,16 @@ function RecruiterDashboard() {
             >
               📝 CHR
             </button>
+            <button
+              onClick={() => setActiveTab('event')}
+              className={`px-6 py-3 font-semibold transition-colors ${
+                activeTab === 'event'
+                  ? 'bg-purple-600 text-white border-b-2 border-purple-600'
+                  : 'text-gray-600 hover:bg-gray-100'
+              }`}
+            >
+              🎟️ Event
+            </button>
           </div>
         </div>
 
@@ -1522,6 +1959,8 @@ function RecruiterDashboard() {
           <StatisticsDashboard />
         ) : activeTab === 'chr' ? (
           <CHRPage />
+        ) : activeTab === 'event' ? (
+          <EventManagement />
         ) : activeTab === 'all-info-sessions' ? (
           renderAllInfoSessions()
         ) : activeTab === 'new-hire-orientation' ? (
@@ -1539,7 +1978,27 @@ function RecruiterDashboard() {
             {/* Sessions List */}
             <div className="lg:col-span-2">
               <div className="bg-white rounded-lg shadow-lg p-6">
-                <h2 className="text-2xl font-bold mb-4">All Info Sessions</h2>
+                <div className="flex justify-between items-center mb-4">
+                  <h2 className="text-2xl font-bold">📋 My Sessions</h2>
+                  <button
+                    onClick={async () => {
+                      try {
+                        setRefreshing(true)
+                        await loadData()
+                        alert('Data refreshed!')
+                      } catch (error) {
+                        console.error('Error refreshing:', error)
+                        alert('Error refreshing data')
+                      } finally {
+                        setRefreshing(false)
+                      }
+                    }}
+                    disabled={refreshing}
+                    className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 text-sm font-semibold disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {refreshing ? '🔄 Refreshing...' : '🔄 Refresh'}
+                  </button>
+                </div>
               <div className="space-y-4">
                 {loading ? (
                   <p className="text-gray-500 text-center py-8">Loading sessions...</p>
@@ -1576,45 +2035,229 @@ function RecruiterDashboard() {
                     </button>
                   </div>
                 ) : (() => {
-                  // Group sessions by date
+                  console.log('🔍 Starting to group sessions. Total sessions:', sessions.length)
+                  console.log('🔍 Sample session:', sessions[0] ? {
+                    id: sessions[0].id,
+                    time_slot: sessions[0].time_slot,
+                    created_at: sessions[0].created_at,
+                    dateKey: getMiamiDateKey(sessions[0].created_at)
+                  } : 'No sessions')
+                  
+                  // Group sessions by date and time slot
                   const groupedSessions: { [key: string]: AssignedSession[] } = {}
-                  sessions.forEach((session) => {
+                  sessions.forEach((session, index) => {
                     const dateKey = getMiamiDateKey(session.created_at)
-                    if (!groupedSessions[dateKey]) {
-                      groupedSessions[dateKey] = []
+                    // Ensure time_slot exists and normalize it
+                    let timeSlot = session.time_slot || 'Unknown'
+                    // Normalize time slot format (handle variations like "8:30 AM", "8:30AM", etc.)
+                    timeSlot = timeSlot.trim()
+                    if (timeSlot === '8:30AM' || timeSlot === '8:30 AM') {
+                      timeSlot = '8:30 AM'
+                    } else if (timeSlot === '1:30PM' || timeSlot === '1:30 PM') {
+                      timeSlot = '1:30 PM'
                     }
-                    groupedSessions[dateKey].push(session)
+                    const groupKey = `${dateKey}_${timeSlot}`
+                    if (!groupedSessions[groupKey]) {
+                      groupedSessions[groupKey] = []
+                    }
+                    groupedSessions[groupKey].push(session)
+                    
+                    // Log first few sessions for debugging
+                    if (index < 3) {
+                      console.log(`🔍 Session ${index + 1}:`, {
+                        id: session.id,
+                        time_slot: session.time_slot,
+                        normalized_time_slot: timeSlot,
+                        dateKey,
+                        groupKey
+                      })
+                    }
                   })
                   
-                  // Sort date keys (most recent first)
-                  const sortedDateKeys = Object.keys(groupedSessions).sort().reverse()
+                  console.log('🔍 Grouped sessions result:', Object.keys(groupedSessions).length, 'groups')
+                  console.log('🔍 Group keys:', Object.keys(groupedSessions))
+                  Object.keys(groupedSessions).forEach(key => {
+                    const [date, time] = key.split('_')
+                    console.log(`  - ${key} (Date: ${date}, Time: ${time}): ${groupedSessions[key].length} sessions`)
+                  })
+                  
+                  // Sort group keys (most recent first, then by time slot)
+                  const sortedGroupKeys = Object.keys(groupedSessions).sort((a, b) => {
+                    const parts_a = a.split('_')
+                    const parts_b = b.split('_')
+                    const dateA = parts_a[0]
+                    const dateB = parts_b[0]
+                    // Get everything after the first underscore as the time slot
+                    const timeA = parts_a.slice(1).join('_')
+                    const timeB = parts_b.slice(1).join('_')
+
+                    console.log(`🔍 Key A: "${a}" -> date: "${dateA}", time: "${timeA}"`)
+                    console.log(`🔍 Key B: "${b}" -> date: "${dateB}", time: "${timeB}"`)
+
+                    if (dateA !== dateB) {
+                      return dateB.localeCompare(dateA) // Most recent first
+                    }
+                    // Same date, sort by time slot chronologically (earliest first)
+                    const parseTime = (timeStr: string) => {
+                      if (!timeStr) return 0
+                      const match = timeStr.match(/(\d+):(\d+)\s*(AM|PM)/i)
+                      if (!match) {
+                        console.log('⚠️ Failed to parse time:', timeStr)
+                        return 0
+                      }
+                      let hours = parseInt(match[1])
+                      const minutes = parseInt(match[2])
+                      const period = match[3].toUpperCase()
+                      if (period === 'PM' && hours !== 12) hours += 12
+                      if (period === 'AM' && hours === 12) hours = 0
+                      const totalMinutes = hours * 60 + minutes
+                      console.log(`🕐 Parsed time "${timeStr}": ${hours}:${minutes} ${period} = ${totalMinutes} minutes`)
+                      return totalMinutes
+                    }
+                    const timeAMinutes = parseTime(timeA)
+                    const timeBMinutes = parseTime(timeB)
+                    const comparison = timeBMinutes - timeAMinutes // Inverted: latest time first (1:30 PM, 10:00 AM, 8:30 AM)
+                    console.log(`📊 Final comparison: "${timeA}" (${timeAMinutes} min) vs "${timeB}" (${timeBMinutes} min) = ${comparison}`)
+                    return comparison
+                  })
+                  
+                  console.log('🔍 Sorted group keys:', sortedGroupKeys)
+                  console.log('🔍 About to render', sortedGroupKeys.length, 'groups')
                   
                   return (
                     <>
-                      {sortedDateKeys.map((dateKey, dateIndex) => {
-                        const sessionsForDate = groupedSessions[dateKey]
+                      {sortedGroupKeys.map((groupKey, groupIndex) => {
+                        const sessionsForGroup = groupedSessions[groupKey]
+                        const [dateKey, timeSlot] = groupKey.split('_')
+                        const firstSession = sessionsForGroup[0]
+                        const isMorning = timeSlot === '8:30 AM'
+
+                        // Check if this is a new date (different from previous group)
+                        const isNewDate = groupIndex === 0 ||
+                          dateKey !== sortedGroupKeys[groupIndex - 1].split('_')[0]
+
+                        console.log(`🔍 Rendering group ${groupIndex + 1}: ${groupKey} with ${sessionsForGroup.length} sessions`)
+
                         return (
-                          <div key={dateKey}>
-                            {/* Date Separator */}
-                            {dateIndex > 0 && (
-                              <div className="my-4 py-3 bg-gray-100 border-t-2 border-b-2 border-gray-300">
-                                <div className="text-center">
-                                  <span className="text-gray-700 font-bold text-lg">
-                                    ─── {formatMiamiDateDisplay(sessionsForDate[0].created_at)} ───
-                                  </span>
+                          <React.Fragment key={groupKey}>
+                            {/* Date Separator - Show when starting a new date */}
+                            {isNewDate && (
+                              <div
+                                className="mb-6 mt-8"
+                                style={{
+                                  borderTop: groupIndex > 0 ? '4px solid #e5e7eb' : 'none',
+                                  paddingTop: groupIndex > 0 ? '2rem' : '0',
+                                  marginTop: groupIndex > 0 ? '2rem' : '0'
+                                }}
+                              >
+                                <div
+                                  className="bg-gradient-to-r from-blue-600 to-purple-600 text-white px-6 py-4 rounded-lg shadow-lg"
+                                  style={{
+                                    fontSize: '1.5rem',
+                                    fontWeight: 'bold',
+                                    textAlign: 'center'
+                                  }}
+                                >
+                                  📅 {formatMiamiDateDisplay(firstSession.created_at)}
                                 </div>
                               </div>
                             )}
+
+                            <div
+                            className="mb-8"
+                            style={{
+                              marginBottom: '3rem',
+                              border: `4px solid ${isMorning ? '#3b82f6' : '#22c55e'}`,
+                              borderRadius: '12px',
+                              padding: '1.5rem',
+                              backgroundColor: isMorning ? '#eff6ff' : '#f0fdf4',
+                              boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)'
+                            }}
+                          >
+                            {/* Group Header - Time Slot and Session Type - ALWAYS SHOW */}
+                            <div
+                              className={`mb-4 py-4 px-6 rounded-lg shadow-lg`}
+                              style={{
+                                backgroundColor: isMorning ? '#2563eb' : '#16a34a',
+                                padding: '1.5rem',
+                                minHeight: '80px',
+                                display: 'flex',
+                                alignItems: 'center'
+                              }}
+                            >
+                              <div className="flex items-center justify-between w-full">
+                                <div className="flex items-center gap-4 flex-wrap">
+                                  <span
+                                    className="px-4 py-2 rounded-lg font-bold text-xl shadow-md"
+                                    style={{
+                                      backgroundColor: 'white',
+                                      color: isMorning ? '#2563eb' : '#16a34a',
+                                      fontSize: '1.5rem',
+                                      fontWeight: 'bold',
+                                      border: `3px solid ${isMorning ? '#3b82f6' : '#22c55e'}`
+                                    }}
+                                  >
+                                    ⏰ {timeSlot || 'Unknown'}
+                                  </span>
+                                  <span
+                                    className="font-semibold text-lg px-3 py-1 rounded-lg"
+                                    style={{
+                                      color: isMorning ? '#2563eb' : '#16a34a',
+                                      backgroundColor: 'white',
+                                      fontSize: '1.125rem',
+                                      fontWeight: '600',
+                                      border: `2px solid ${isMorning ? '#3b82f6' : '#22c55e'}`
+                                    }}
+                                  >
+                                    {firstSession.session_type === 'new-hire' ? '📋 New Hire' : '🔄 Reactivation'}
+                                  </span>
+                                </div>
+                                <span
+                                  className="px-4 py-2 rounded-lg font-bold text-lg shadow-md"
+                                  style={{
+                                    backgroundColor: 'white',
+                                    color: isMorning ? '#2563eb' : '#16a34a',
+                                    fontSize: '1.25rem',
+                                    fontWeight: 'bold',
+                                    border: `3px solid ${isMorning ? '#3b82f6' : '#22c55e'}`
+                                  }}
+                                >
+                                  {sessionsForGroup.length} {sessionsForGroup.length === 1 ? 'Applicant' : 'Applicants'}
+                                </span>
+                              </div>
+                            </div>
                             
-                            {/* Sessions for this date */}
-                            {sessionsForDate.map((session, sessionIndex) => (
+                            {/* Sessions for this group */}
+                            {sessionsForGroup.map((session, sessionIndex) => {
+                              // If completed, always use green
+                              const isCompleted = session.status === 'completed'
+                              
+                              // Different color for each session to easily distinguish them
+                              // Use a palette of distinct colors that rotate
+                              const colorPalette = [
+                                { bg: 'bg-blue-50', border: 'border-blue-300', hover: 'hover:bg-blue-100', strong: 'bg-blue-100', strongBorder: 'border-blue-500' },
+                                { bg: 'bg-green-50', border: 'border-green-300', hover: 'hover:bg-green-100', strong: 'bg-green-100', strongBorder: 'border-green-500' },
+                                { bg: 'bg-purple-50', border: 'border-purple-300', hover: 'hover:bg-purple-100', strong: 'bg-purple-100', strongBorder: 'border-purple-500' },
+                                { bg: 'bg-yellow-50', border: 'border-yellow-300', hover: 'hover:bg-yellow-100', strong: 'bg-yellow-100', strongBorder: 'border-yellow-500' },
+                                { bg: 'bg-pink-50', border: 'border-pink-300', hover: 'hover:bg-pink-100', strong: 'bg-pink-100', strongBorder: 'border-pink-500' },
+                                { bg: 'bg-indigo-50', border: 'border-indigo-300', hover: 'hover:bg-indigo-100', strong: 'bg-indigo-100', strongBorder: 'border-indigo-500' },
+                                { bg: 'bg-orange-50', border: 'border-orange-300', hover: 'hover:bg-orange-100', strong: 'bg-orange-100', strongBorder: 'border-orange-500' },
+                                { bg: 'bg-teal-50', border: 'border-teal-300', hover: 'hover:bg-teal-100', strong: 'bg-teal-100', strongBorder: 'border-teal-500' },
+                              ]
+                              
+                              // Use session index to cycle through colors
+                              const colorIndex = sessionIndex % colorPalette.length
+                              const sessionColor = colorPalette[colorIndex]
+                              
+                              // If completed, use green colors
+                              const finalBgColor = isCompleted ? 'bg-green-100' : (session.assigned_recruiter_id === parseInt(recruiterId || '0') ? sessionColor.strong : sessionColor.bg)
+                              const finalBorderColor = isCompleted ? 'border-green-500' : (session.assigned_recruiter_id === parseInt(recruiterId || '0') ? sessionColor.strongBorder : sessionColor.border)
+                              const finalHover = isCompleted ? 'hover:bg-green-200' : sessionColor.hover
+                              
+                              return (
                               <div
                                 key={session.id}
-                                className={`border rounded-lg p-4 hover:bg-gray-50 cursor-pointer transition-colors mb-4 ${
-                                  session.assigned_recruiter_id === parseInt(recruiterId || '0')
-                                    ? 'border-blue-500 bg-blue-50'
-                                    : ''
-                                }`}
+                                className={`border rounded-lg p-4 ${finalBgColor} ${finalHover} cursor-pointer transition-colors mb-4 ${finalBorderColor}`}
                                 onClick={() => openSessionDetails(session)}
                               >
                       <div className="flex justify-between items-start">
@@ -1623,8 +2266,21 @@ function RecruiterDashboard() {
                             <span className="font-semibold text-gray-600 text-lg">
                               #{sessionIndex + 1}
                             </span>
-                            <h3 className="font-bold text-lg">
-                              {session.first_name} {session.last_name}
+                            <h3 className="font-bold text-lg flex items-center gap-2">
+                              <span>{session.first_name} {session.last_name}</span>
+                              {(session as any).is_duplicate && (
+                                <span className="px-2 py-1 bg-orange-500 text-white text-xs font-bold rounded" title={`⚠️ DUPLICATE - Registered ${(session as any).duplicate_count} times`}>
+                                  ⚠️ DUPLICATE ({(session as any).duplicate_count}x)
+                                </span>
+                              )}
+                              {(() => {
+                                console.log(`🔍 Rendering ${session.first_name} ${session.last_name}: is_in_exclusion_list=${session.is_in_exclusion_list}, type=${typeof session.is_in_exclusion_list}`)
+                                return session.is_in_exclusion_list && (
+                                  <span className="px-2 py-1 bg-red-600 text-white text-xs font-bold rounded" title="⚠️ IN PC/RR EXCLUSION LIST">
+                                    ⚠️ PC/RR
+                                  </span>
+                                )
+                              })()}
                             </h3>
                             <button
                               onClick={async (e) => {
@@ -1658,7 +2314,13 @@ function RecruiterDashboard() {
                           </div>
                           <p className="text-gray-600">{session.email}</p>
                           <p className="text-sm text-gray-500">
-                            {session.time_slot} - {session.session_type}
+                            <span className={`px-2 py-1 rounded text-xs font-semibold ${
+                              session.time_slot === '8:30 AM' ? 'bg-blue-200 text-blue-900' : 'bg-green-200 text-green-900'
+                            }`}>
+                              {session.time_slot}
+                            </span>
+                            {' '}- {session.session_type}
+                            {' '}- <span className="text-xs text-gray-400">Session #{sessionIndex + 1}</span>
                           </p>
                           {session.assigned_recruiter_name ? (
                             <p className="text-sm text-gray-600 mt-1">
@@ -1686,13 +2348,15 @@ function RecruiterDashboard() {
                           <span
                             className={`px-3 py-1 rounded text-sm font-bold ${
                               session.status === 'completed'
-                                ? 'bg-green-100 text-green-800'
+                                ? 'bg-green-500 text-white'
                                 : session.status === 'in-progress'
                                 ? 'bg-yellow-100 text-yellow-800'
+                                : session.status === 'initiated'
+                                ? 'bg-blue-100 text-blue-800'
                                 : 'bg-gray-100 text-gray-800'
                             }`}
                           >
-                            {session.status}
+                            {session.status === 'completed' ? '✓ Completed' : session.status}
                           </span>
                           {!session.started_at && session.status !== 'completed' && (
                             (session.assigned_recruiter_id === parseInt(recruiterId || '0') || !session.assigned_recruiter_id) ? (
@@ -1716,11 +2380,35 @@ function RecruiterDashboard() {
                               Can view and edit
                             </p>
                           )}
+                          <button
+                            onClick={async (e) => {
+                              e.stopPropagation()
+                              const confirmed = window.confirm(
+                                `Are you sure you want to delete the registration for ${session.first_name} ${session.last_name}?\n\nThis action cannot be undone.`
+                              )
+                              if (confirmed) {
+                                try {
+                                  await deleteInfoSession(session.id)
+                                  alert('Registration deleted successfully')
+                                  await loadData()
+                                } catch (error: any) {
+                                  console.error('Error deleting session:', error)
+                                  alert(`Error deleting registration: ${error.response?.data?.detail || error.message || 'Unknown error'}`)
+                                }
+                              }
+                            }}
+                            className="mt-2 px-3 py-1 bg-red-600 text-white rounded text-sm hover:bg-red-700 font-semibold"
+                            title="Delete registration"
+                          >
+                            🗑️ Delete
+                          </button>
                         </div>
                       </div>
                     </div>
-                            ))}
+                              )
+                            })}
                           </div>
+                          </React.Fragment>
                         )
                       })}
                     </>
@@ -1797,12 +2485,40 @@ function RecruiterDashboard() {
                     </div>
                   )}
 
-                  {/* Row Generator for In-Progress, Registered, and Completed Sessions */}
-                  {(selectedSession.status === 'in-progress' || selectedSession.status === 'registered' || selectedSession.status === 'completed') && selectedTemplate && (
+                  {/* Row Generator for In-Progress, Registered, Completed, Initiated, Interview In Progress, and Answers Submitted Sessions */}
+                  {(() => {
+                    const shouldShowRowGenerator = selectedSession.status === 'in-progress' ||
+                                                    selectedSession.status === 'registered' ||
+                                                    selectedSession.status === 'completed' ||
+                                                    selectedSession.status === 'initiated' ||
+                                                    selectedSession.status === 'interview_in_progress' ||
+                                                    selectedSession.status === 'answers_submitted'
+                    console.log('🔍 Row Generator check:', {
+                      status: selectedSession.status,
+                      shouldShow: shouldShowRowGenerator,
+                      selectedTemplate: selectedTemplate?.name || 'null',
+                      templatesCount: templates.length
+                    })
+                    
+                    if (!shouldShowRowGenerator) return null
+                    
+                    // Use selectedTemplate or fallback to first available template
+                    const templateToShow = selectedTemplate || (templates.length > 0 ? templates[0] : null)
+                    if (!templateToShow) {
+                      console.log('⚠️ No template available - selectedTemplate:', selectedTemplate, 'templates.length:', templates.length)
+                      return (
+                        <div className="border-t pt-4 mt-4">
+                          <div className="bg-yellow-50 border-l-4 border-yellow-500 p-4">
+                            <p className="text-yellow-800 text-sm">⚠️ Row Generator not available: No template configured. Please contact admin.</p>
+                          </div>
+                        </div>
+                      )
+                    }
+                    return (
                     <div className="border-t pt-4 mt-4">
                       <h3 className="font-bold mb-3">Row Generator</h3>
                       <div className="space-y-3">
-                        {selectedTemplate.columns
+                        {templateToShow.columns
                           .sort((a, b) => a.order - b.order)
                           .map((column) => (
                             <div key={column.id || column.order}>
@@ -1917,7 +2633,8 @@ function RecruiterDashboard() {
                         )}
                       </div>
                     </div>
-                  )}
+                    )
+                  })()}
 
                   <div className="border-t pt-4">
                     <h3 className="font-bold mb-3">Document Status</h3>
@@ -2000,6 +2717,7 @@ function RecruiterDashboard() {
                         Questions
                       </label>
                     </div>
+
                   </div>
 
                   <div className="flex gap-2 pt-4 border-t">
@@ -2039,6 +2757,40 @@ function RecruiterDashboard() {
                         Reopen Session
                       </button>
                     )}
+                  </div>
+
+                  {/* Resend Questions Link */}
+                  <div className="pt-4 border-t">
+                    <button
+                      onClick={async () => {
+                        const link = `${window.location.origin}/info-session/${selectedSession.id}/questions`
+                        try {
+                          await navigator.clipboard.writeText(link)
+                          alert('Link copied! Send it to the aspirant so they can answer or edit their questions.')
+                        } catch {
+                          const textArea = document.createElement('textarea')
+                          textArea.value = link
+                          document.body.appendChild(textArea)
+                          textArea.select()
+                          document.execCommand('copy')
+                          document.body.removeChild(textArea)
+                          alert('Link copied! Send it to the aspirant so they can answer or edit their questions.')
+                        }
+                      }}
+                      className="w-full px-4 py-2 bg-teal-600 text-white rounded hover:bg-teal-700"
+                    >
+                      Resend Questions Link
+                    </button>
+                  </div>
+
+                  {/* Reassign Button */}
+                  <div className="pt-4 border-t">
+                    <button
+                      onClick={() => setShowReassignModal(true)}
+                      className="w-full px-4 py-2 bg-purple-600 text-white rounded hover:bg-purple-700"
+                    >
+                      Reassign to Another Recruiter
+                    </button>
                   </div>
                 </div>
               </div>
@@ -2173,6 +2925,58 @@ function RecruiterDashboard() {
                 className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"
               >
                 Save
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Reassign Modal */}
+      {showReassignModal && selectedSession && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4">
+            <div className="flex justify-between items-center mb-4">
+              <h2 className="text-2xl font-bold">Reassign Session</h2>
+              <button
+                onClick={() => setShowReassignModal(false)}
+                className="text-gray-500 hover:text-gray-700 text-2xl"
+              >
+                ×
+              </button>
+            </div>
+
+            <div className="space-y-4">
+              <p className="text-gray-700">
+                Reassign <strong>{selectedSession.first_name} {selectedSession.last_name}</strong> to:
+              </p>
+
+              <select
+                value={selectedNewRecruiter || ''}
+                onChange={(e) => setSelectedNewRecruiter(parseInt(e.target.value))}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md"
+              >
+                <option value="">Select a recruiter...</option>
+                {allRecruiters.filter(r => r.id !== parseInt(recruiterId || '0')).map(recruiter => (
+                  <option key={recruiter.id} value={recruiter.id}>
+                    {recruiter.name} ({recruiter.status})
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="flex justify-end space-x-3 mt-6">
+              <button
+                onClick={() => setShowReassignModal(false)}
+                className="px-4 py-2 border border-gray-300 rounded-md hover:bg-gray-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleReassignSession}
+                disabled={!selectedNewRecruiter}
+                className="px-4 py-2 bg-purple-600 text-white rounded-md hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Reassign
               </button>
             </div>
           </div>
