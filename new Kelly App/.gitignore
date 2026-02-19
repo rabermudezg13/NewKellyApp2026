@@ -117,3 +117,5 @@ ssl/
 certs/
 
 
+.vercel
+.env*.local

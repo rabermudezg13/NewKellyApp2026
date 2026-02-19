@@ -116,12 +116,17 @@ async def register_info_session(
     initialize_default_recruiters(db)
     
     # Check exclusion list
+    print(f"🔍 Checking exclusion list for: {registration.first_name} {registration.last_name}")
     exclusion_matches = check_name_in_exclusion_list(
-        db, 
-        registration.first_name, 
+        db,
+        registration.first_name,
         registration.last_name
     )
     is_excluded = len(exclusion_matches) > 0
+    print(f"🔍 Exclusion check result: {len(exclusion_matches)} matches found, is_excluded={is_excluded}")
+    if exclusion_matches:
+        for match in exclusion_matches:
+            print(f"   - Match: {match.name} (Code: {match.code}, SSN: {match.ssn})")
     
     # Get exclusion match info (use first match if any)
     exclusion_match_info = None
@@ -158,6 +163,7 @@ async def register_info_session(
     print(f"   Assigned to recruiter ID: {assigned_recruiter.id}, Name: {assigned_recruiter.name}, Email: {assigned_recruiter.email}")
     
     # Create info session record - ALWAYS with a recruiter assigned
+    print(f"📝 Creating session with status='initiated'")
     info_session = InfoSession(
         first_name=registration.first_name,
         last_name=registration.last_name,
@@ -168,14 +174,16 @@ async def register_info_session(
         time_slot=registration.time_slot,
         is_in_exclusion_list=is_excluded,
         exclusion_warning_shown=is_excluded,
-        status="in-progress",  # New sessions start as in-progress
+        status="initiated",  # New sessions start as initiated, change to answers_submitted when questions are answered
         assigned_recruiter_id=assigned_recruiter.id,  # Always assigned now
         started_at=datetime.utcnow()  # Set started_at when session is created
     )
+    print(f"📝 Session object created with status='{info_session.status}'")
     
     db.add(info_session)
     db.commit()
     db.refresh(info_session)
+    print(f"📝 Session saved to DB with status='{info_session.status}'")
     
     # Create default steps
     for step_data in DEFAULT_STEPS:
@@ -189,7 +197,8 @@ async def register_info_session(
     
     db.commit()
     db.refresh(info_session)
-    
+    print(f"📝 After creating steps, session status='{info_session.status}'")
+
     # Return with steps
     # Get recruiter name if assigned
     recruiter_name = None
@@ -214,19 +223,30 @@ async def register_info_session(
 
 @router.get("/live")
 async def get_live_info_sessions(db: Session = Depends(get_db)):
-    """Get live info sessions (registered but not completed)"""
+    """Get live info sessions (registered, in-progress, initiated, and completed)"""
     sessions = db.query(InfoSession).options(joinedload(InfoSession.steps)).filter(
-        InfoSession.status.in_(["registered", "in-progress"])
+        InfoSession.status.in_(["registered", "in-progress", "initiated", "completed"])
     ).order_by(InfoSession.created_at.desc()).all()
-    
+
+    # Detect duplicates: find name+email combos that appear more than once (case-insensitive)
+    # Check against ALL sessions (not just live ones) to catch duplicates across sessions
+    all_sessions = db.query(InfoSession).all()
+    name_counts: dict = {}
+    for s in all_sessions:
+        name_key = f"{s.first_name.strip().lower()}_{s.last_name.strip().lower()}_{s.email.strip().lower()}"
+        name_counts[name_key] = name_counts.get(name_key, 0) + 1
+
+    duplicate_names = {k for k, v in name_counts.items() if v > 1}
+
     result = []
     for session in sessions:
+        name_key = f"{session.first_name.strip().lower()}_{session.last_name.strip().lower()}_{session.email.strip().lower()}"
         recruiter_name = None
         if session.assigned_recruiter_id:
             recruiter = db.query(Recruiter).filter(Recruiter.id == session.assigned_recruiter_id).first()
             if recruiter:
                 recruiter_name = recruiter.name
-        
+
         exclusion_match = None
         if session.is_in_exclusion_list:
             try:
@@ -241,7 +261,7 @@ async def get_live_info_sessions(db: Session = Depends(get_db)):
             except Exception as e:
                 print(f"Error getting exclusion match: {e}")
                 exclusion_match = None
-        
+
         steps = []
         for step in session.steps:
             steps.append({
@@ -249,7 +269,7 @@ async def get_live_info_sessions(db: Session = Depends(get_db)):
                 "step_description": step.step_description if step.step_description else "",
                 "is_completed": step.is_completed
             })
-        
+
         item = {
             "id": session.id,
             "first_name": session.first_name,
@@ -276,10 +296,12 @@ async def get_live_info_sessions(db: Session = Depends(get_db)):
             "duration_minutes": session.duration_minutes,
             "created_at": session.created_at.isoformat(),
             "exclusion_match": exclusion_match,
-            "steps": steps
+            "steps": steps,
+            "is_duplicate": name_key in duplicate_names,
+            "duplicate_count": name_counts.get(name_key, 1),
         }
         result.append(item)
-    
+
     return result
 
 @router.get("/completed")
@@ -288,9 +310,18 @@ async def get_completed_info_sessions(db: Session = Depends(get_db)):
     sessions = db.query(InfoSession).options(joinedload(InfoSession.steps)).filter(
         InfoSession.status == "completed"
     ).order_by(InfoSession.completed_at.desc()).all()
-    
+
+    # Detect duplicates across ALL sessions (name + email)
+    all_sessions = db.query(InfoSession).all()
+    name_counts: dict = {}
+    for s in all_sessions:
+        nk = f"{s.first_name.strip().lower()}_{s.last_name.strip().lower()}_{s.email.strip().lower()}"
+        name_counts[nk] = name_counts.get(nk, 0) + 1
+    duplicate_names = {k for k, v in name_counts.items() if v > 1}
+
     result = []
     for session in sessions:
+        name_key = f"{session.first_name.strip().lower()}_{session.last_name.strip().lower()}_{session.email.strip().lower()}"
         recruiter_name = None
         if session.assigned_recruiter_id:
             recruiter = db.query(Recruiter).filter(Recruiter.id == session.assigned_recruiter_id).first()
@@ -346,10 +377,12 @@ async def get_completed_info_sessions(db: Session = Depends(get_db)):
             "duration_minutes": session.duration_minutes,
             "created_at": session.created_at.isoformat(),
             "exclusion_match": exclusion_match,
-            "steps": steps
+            "steps": steps,
+            "is_duplicate": name_key in duplicate_names,
+            "duplicate_count": name_counts.get(name_key, 1),
         }
         result.append(item)
-    
+
     return result
 
 @router.get("/{session_id}", response_model=InfoSessionWithSteps)
@@ -399,33 +432,38 @@ async def complete_step(
     db: Session = Depends(get_db)
 ):
     """Mark a step as completed"""
+    print(f"📋 Completing step '{step_name}' for session {session_id}")
     step = db.query(InfoSessionStep).filter(
         InfoSessionStep.info_session_id == session_id,
         InfoSessionStep.step_name == step_name
     ).first()
-    
+
     if not step:
         raise HTTPException(status_code=404, detail="Step not found")
-    
+
     step.is_completed = True
     step.completed_at = datetime.utcnow()
-    
-    # Check if all steps are completed, then assign recruiter if not assigned
+    print(f"📋 Step '{step_name}' marked as completed")
+
+    # NOTE: Completing steps (checkboxes) does NOT change status to 'answers_submitted'
+    # Status only changes to 'answers_submitted' when user submits question responses
+    # This is handled in the POST /{session_id}/questions endpoint
+
+    # Assign recruiter if not assigned (try to assign after first step completion)
     info_session = db.query(InfoSession).filter(InfoSession.id == session_id).first()
     if info_session:
-        all_steps_completed = all(s.is_completed for s in info_session.steps)
-        if all_steps_completed and not info_session.assigned_recruiter_id:
-            # Mark as completed and assign recruiter
-            info_session.status = "completed"
-            info_session.completed_at = datetime.utcnow()
-            
-            # Assign recruiter when all steps are completed
-            from app.services.recruiter_service import get_next_recruiter, initialize_default_recruiters
-            from datetime import date
-            initialize_default_recruiters(db)
-            recruiter = get_next_recruiter(db, info_session.time_slot, date.today())
-            if recruiter:
-                info_session.assigned_recruiter_id = recruiter.id
+        total_steps = len(info_session.steps)
+        completed_steps = sum(1 for s in info_session.steps if s.is_completed)
+        print(f"📋 Steps status: {completed_steps}/{total_steps} completed (status remains '{info_session.status}')")
+
+        if not info_session.assigned_recruiter_id:
+                from app.services.recruiter_service import get_next_recruiter, initialize_default_recruiters
+                from datetime import date
+                initialize_default_recruiters(db)
+                recruiter = get_next_recruiter(db, info_session.time_slot, date.today())
+                if recruiter:
+                    info_session.assigned_recruiter_id = recruiter.id
+                    print(f"✅ Recruiter {recruiter.name} assigned to session {session_id}")
     
     db.commit()
     
@@ -436,34 +474,44 @@ async def complete_info_session(
     session_id: int,
     db: Session = Depends(get_db)
 ):
-    """Mark info session as completed and assign recruiter"""
-    info_session = db.query(InfoSession).filter(InfoSession.id == session_id).first()
-    if not info_session:
-        raise HTTPException(status_code=404, detail="Info session not found")
-    
-    if info_session.status == "completed":
-        return {"message": "Session already completed", "session_id": session_id}
-    
-    # Mark as completed
-    info_session.status = "completed"
-    info_session.completed_at = datetime.utcnow()
-    
-    # Calculate duration from registration (created_at) to completion (completed_at)
-    if info_session.created_at:
-        duration = info_session.completed_at - info_session.created_at
-        info_session.duration_minutes = int(duration.total_seconds() / 60)
-    
-    # Assign recruiter if not already assigned
-    if not info_session.assigned_recruiter_id:
-        initialize_default_recruiters(db)
-        recruiter = get_next_recruiter(db, info_session.time_slot, date.today())
-        if recruiter:
-            info_session.assigned_recruiter_id = recruiter.id
-    
-    db.commit()
-    db.refresh(info_session)
-    
-    return {"message": "Info session completed successfully", "session_id": session_id}
+    """Mark info session as answers_submitted (applicant has finished the info session steps)"""
+    try:
+        info_session = db.query(InfoSession).filter(InfoSession.id == session_id).first()
+        if not info_session:
+            raise HTTPException(status_code=404, detail="Info session not found")
+
+        # Don't change status if already completed by recruiter
+        if info_session.status == "completed":
+            return {"message": "Session already completed by recruiter", "session_id": session_id}
+
+        # Mark as answers_submitted - the applicant has finished the info session steps
+        # "completed" status is only set when recruiter completes the session
+        info_session.status = "answers_submitted"
+        # Don't set completed_at here - that's only set when recruiter completes
+        print(f"✅ Info session {session_id} marked as 'answers_submitted' (user completed steps)")
+
+        # Note: duration_minutes is only calculated when recruiter completes the session
+
+        # Try to assign recruiter (non-critical)
+        try:
+            if not info_session.assigned_recruiter_id:
+                initialize_default_recruiters(db)
+                recruiter = get_next_recruiter(db, info_session.time_slot, date.today())
+                if recruiter:
+                    info_session.assigned_recruiter_id = recruiter.id
+        except:
+            pass
+
+        db.commit()
+        db.refresh(info_session)
+
+        return {"message": "Info session completed successfully", "session_id": session_id}
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"ERROR completing session {session_id}: {e}")
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Error: {str(e)}")
 
 class InterviewQuestionsUpdate(BaseModel):
     question_1_response: Optional[str] = None
@@ -478,21 +526,40 @@ async def update_interview_questions(
     db: Session = Depends(get_db)
 ):
     """Update interview questions responses for an info session"""
+    print(f"💾 Saving interview questions for session {session_id}")
+    print(f"   Question 1: {questions_data.question_1_response[:50] if questions_data.question_1_response else 'None'}...")
+    print(f"   Question 2: {questions_data.question_2_response[:50] if questions_data.question_2_response else 'None'}...")
+    print(f"   Question 3: {questions_data.question_3_response[:50] if questions_data.question_3_response else 'None'}...")
+    print(f"   Question 4: {questions_data.question_4_response[:50] if questions_data.question_4_response else 'None'}...")
+    
     info_session = db.query(InfoSession).filter(InfoSession.id == session_id).first()
     if not info_session:
+        print(f"❌ Session {session_id} not found")
         raise HTTPException(status_code=404, detail="Info session not found")
     
+    # Update responses - convert empty strings to None
     if questions_data.question_1_response is not None:
-        info_session.question_1_response = questions_data.question_1_response
+        info_session.question_1_response = questions_data.question_1_response.strip() if questions_data.question_1_response.strip() else None
     if questions_data.question_2_response is not None:
-        info_session.question_2_response = questions_data.question_2_response
+        info_session.question_2_response = questions_data.question_2_response.strip() if questions_data.question_2_response.strip() else None
     if questions_data.question_3_response is not None:
-        info_session.question_3_response = questions_data.question_3_response
+        info_session.question_3_response = questions_data.question_3_response.strip() if questions_data.question_3_response.strip() else None
     if questions_data.question_4_response is not None:
-        info_session.question_4_response = questions_data.question_4_response
-    
+        info_session.question_4_response = questions_data.question_4_response.strip() if questions_data.question_4_response.strip() else None
+
+    # Change status to 'answers_submitted' when answers are saved
+    if info_session.status == 'initiated':
+        info_session.status = 'answers_submitted'
+        print(f"✅ Status changed to 'answers_submitted' for session {session_id}")
+
     db.commit()
     db.refresh(info_session)
+    
+    print(f"✅ Saved responses for session {session_id}:")
+    print(f"   Q1: {info_session.question_1_response[:50] if info_session.question_1_response else 'None'}...")
+    print(f"   Q2: {info_session.question_2_response[:50] if info_session.question_2_response else 'None'}...")
+    print(f"   Q3: {info_session.question_3_response[:50] if info_session.question_3_response else 'None'}...")
+    print(f"   Q4: {info_session.question_4_response[:50] if info_session.question_4_response else 'None'}...")
     
     return {"message": "Interview questions updated successfully", "session_id": session_id}
 
@@ -661,6 +728,25 @@ async def list_info_sessions(
         result.append(session_data)
     return result
 
+
+@router.delete("/{session_id}")
+async def delete_info_session(
+    session_id: int,
+    db: Session = Depends(get_db)
+):
+    """Delete an info session"""
+    info_session = db.query(InfoSession).filter(InfoSession.id == session_id).first()
+    if not info_session:
+        raise HTTPException(status_code=404, detail="Info session not found")
+    
+    # Delete associated steps (cascade should handle this, but being explicit)
+    db.query(InfoSessionStep).filter(InfoSessionStep.info_session_id == session_id).delete()
+    
+    # Delete the session
+    db.delete(info_session)
+    db.commit()
+    
+    return {"message": "Info session deleted successfully", "session_id": session_id}
 
 @router.get("/exclusion-check/{first_name}/{last_name}")
 async def check_exclusion(

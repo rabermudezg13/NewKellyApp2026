@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { getUsers, createUser, deleteUser, getCurrentUser, uploadExclusionList, clearExclusionList } from '../services/api'
+import { getUsers, createUser, deleteUser, getCurrentUser, uploadExclusionList, clearExclusionList, getExclusionList } from '../services/api'
 import type { User } from '../types'
 
 function AdminDashboard() {
@@ -18,10 +18,20 @@ function AdminDashboard() {
   const [success, setSuccess] = useState<string | null>(null)
   const [showExclusionUpload, setShowExclusionUpload] = useState(false)
   const [uploading, setUploading] = useState(false)
+  const [exclusionPreview, setExclusionPreview] = useState<any[]>([])
+  const [exclusionTotal, setExclusionTotal] = useState(0)
+  const [loadingExclusion, setLoadingExclusion] = useState(false)
 
   useEffect(() => {
     checkAuthAndLoad()
   }, [])
+
+  // Load exclusion list preview when section is opened
+  useEffect(() => {
+    if (showExclusionUpload) {
+      loadExclusionPreview()
+    }
+  }, [showExclusionUpload])
 
   const checkAuthAndLoad = async () => {
     try {
@@ -114,6 +124,23 @@ function AdminDashboard() {
     navigate('/admin/login')
   }
 
+  const loadExclusionPreview = async () => {
+    setLoadingExclusion(true)
+    try {
+      const listResult = await getExclusionList()
+      setExclusionPreview(listResult.items.slice(0, 5))
+      setExclusionTotal(listResult.total)
+    } catch (err: any) {
+      console.error('Error loading exclusion list:', err)
+      // Don't show error if list is just empty
+      if (err.response?.status !== 404) {
+        setError('Error loading exclusion list preview')
+      }
+    } finally {
+      setLoadingExclusion(false)
+    }
+  }
+
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (!file) return
@@ -133,7 +160,11 @@ function AdminDashboard() {
       if (result.errors && result.errors.length > 0) {
         setError(`Some rows had errors: ${result.errors.slice(0, 3).join(', ')}`)
       }
-      setShowExclusionUpload(false)
+
+      // Load first 5 items to show preview
+      const listResult = await getExclusionList()
+      setExclusionPreview(listResult.items.slice(0, 5))
+      setExclusionTotal(listResult.total)
     } catch (err: any) {
       setError(err.response?.data?.detail || 'Error uploading file')
     } finally {
@@ -151,6 +182,8 @@ function AdminDashboard() {
     try {
       await clearExclusionList()
       setSuccess('Exclusion list cleared successfully')
+      setExclusionPreview([])
+      setExclusionTotal(0)
     } catch (err: any) {
       setError(err.response?.data?.detail || 'Error clearing exclusion list')
     }
@@ -259,6 +292,53 @@ function AdminDashboard() {
             {uploading && (
               <div className="mt-4">
                 <div className="animate-pulse text-gray-600">Processing file...</div>
+              </div>
+            )}
+
+            {/* Loading state */}
+            {loadingExclusion && !uploading && (
+              <div className="mt-4">
+                <div className="animate-pulse text-gray-600">Loading exclusion list...</div>
+              </div>
+            )}
+
+            {/* Show preview of current/uploaded items */}
+            {!loadingExclusion && exclusionPreview.length > 0 && (
+              <div className="mt-6">
+                <h3 className="text-lg font-bold mb-3 text-green-700">
+                  ✅ Active List - Showing first 5 of {exclusionTotal} records:
+                </h3>
+                <div className="bg-gray-50 rounded-lg p-4 overflow-x-auto">
+                  <table className="min-w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-gray-300">
+                        <th className="text-left py-2 px-3 font-semibold">Name</th>
+                        <th className="text-left py-2 px-3 font-semibold">Code</th>
+                        <th className="text-left py-2 px-3 font-semibold">DOB</th>
+                        <th className="text-left py-2 px-3 font-semibold">SSN</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {exclusionPreview.map((item, index) => (
+                        <tr key={item.id} className={index % 2 === 0 ? 'bg-white' : 'bg-gray-100'}>
+                          <td className="py-2 px-3">{item.name}</td>
+                          <td className="py-2 px-3">{item.code || '-'}</td>
+                          <td className="py-2 px-3">{item.dob ? new Date(item.dob).toLocaleDateString() : '-'}</td>
+                          <td className="py-2 px-3">{item.ssn || '-'}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
+            {/* Empty state */}
+            {!loadingExclusion && !uploading && exclusionPreview.length === 0 && exclusionTotal === 0 && (
+              <div className="mt-6 bg-yellow-50 border-l-4 border-yellow-400 p-4">
+                <p className="text-yellow-800 font-semibold">
+                  ⚠️ No exclusion list uploaded yet. Upload an Excel file to activate the exclusion checking.
+                </p>
               </div>
             )}
           </div>

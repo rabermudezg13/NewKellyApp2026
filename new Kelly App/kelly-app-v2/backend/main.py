@@ -6,17 +6,15 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 import uvicorn
+import os
 
-from app.api import info_session, admin, announcements, info_session_config, new_hire_orientation_config, new_hire_orientation, recruiter, auth, visits, exclusion_list, row_template, chr, statistics
+from app.api import info_session, admin, announcements, info_session_config, new_hire_orientation_config, new_hire_orientation, recruiter, auth, visits, exclusion_list, row_template, chr, statistics, event, meet_greet
 from app.database import engine, Base, SessionLocal
 from app.services.user_service import initialize_default_admin
 import sqlite3
 from pathlib import Path
 
-# Create database tables
-Base.metadata.create_all(bind=engine)
-
-# Import all models to ensure they are registered with SQLAlchemy
+# Import all models to ensure they are registered with SQLAlchemy BEFORE create_all
 # Note: We import models with different names to avoid conflicts with API routers
 from app.models import (
     user as user_model,
@@ -28,8 +26,12 @@ from app.models import (
     exclusion_list as exclusion_list_model,
     row_template as row_template_model,
     chr as chr_model,
-    visit as visit_model
+    visit as visit_model,
+    event as event_model
 )
+
+# Create database tables (models must be imported first)
+Base.metadata.create_all(bind=engine)
 
 # Ensure generated_row and question response fields exist in info_sessions table (migration)
 # Only run SQLite migrations if using SQLite
@@ -104,7 +106,19 @@ try:
             conn.close()
     else:
         # PostgreSQL - las tablas se crean automáticamente con Base.metadata.create_all
-        print("📊 Usando PostgreSQL - las tablas se crearán automáticamente")
+        # pero necesitamos agregar columnas nuevas manualmente
+        print("📊 Usando PostgreSQL - verificando migraciones...")
+        from sqlalchemy import text, inspect
+        with engine.connect() as conn:
+            inspector = inspect(engine)
+            # Migration: add subparty_suggestion to meet_greets
+            if 'meet_greets' in inspector.get_table_names():
+                mg_columns = [col['name'] for col in inspector.get_columns('meet_greets')]
+                if 'subparty_suggestion' not in mg_columns:
+                    print("📝 Adding 'subparty_suggestion' column to meet_greets...")
+                    conn.execute(text("ALTER TABLE meet_greets ADD COLUMN subparty_suggestion TEXT"))
+                    conn.commit()
+                    print("✅ Column 'subparty_suggestion' added successfully")
 except Exception as e:
     print(f"⚠️  Warning: Could not add fields: {e}")
     print("   The fields will be added automatically on next database creation.")
@@ -126,23 +140,69 @@ app = FastAPI(
     version="2.0.0"
 )
 
-# CORS configuration - Load from environment variables
-import os
-# Permitir acceso desde cualquier origen en desarrollo (para acceso desde red local)
-# En producción, usar CORS_ORIGINS con dominios específicos
-cors_origins_str = os.getenv("CORS_ORIGINS", "*")  # Permitir todos los orígenes por defecto
-if cors_origins_str == "*":
-    cors_origins = ["*"]
-else:
-    cors_origins = [origin.strip() for origin in cors_origins_str.split(",") if origin.strip()]
+# CORS configuration - AGGRESSIVE FIX for Railway
+print("="*80)
+print("🔧 RAILWAY DEPLOYMENT v3: AGGRESSIVE CORS CONFIGURATION")
+print("="*80)
 
+# Add CORS middleware - MUST be before any routes
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=cors_origins,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=["*"],  # Allow all origins
+    allow_credentials=False,
+    allow_methods=["*"],  # Allow all methods
+    allow_headers=["*"],  # Allow all headers
+    expose_headers=["*"],
 )
+
+# Additional middleware to ensure CORS headers are always present
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request
+
+class ForceCORSMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        # Handle preflight OPTIONS requests
+        if request.method == "OPTIONS":
+            from fastapi.responses import Response
+            return Response(
+                status_code=200,
+                headers={
+                    "Access-Control-Allow-Origin": "*",
+                    "Access-Control-Allow-Methods": "*",
+                    "Access-Control-Allow-Headers": "*",
+                    "Access-Control-Allow-Credentials": "false",
+                    "Access-Control-Max-Age": "3600",
+                }
+            )
+
+        try:
+            response = await call_next(request)
+        except Exception as e:
+            # Even on errors, return CORS headers
+            print(f"⚠️ Exception in middleware: {e}")
+            from fastapi.responses import JSONResponse
+            response = JSONResponse(
+                status_code=500,
+                content={"detail": "Internal server error"},
+                headers={
+                    "Access-Control-Allow-Origin": "*",
+                    "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, PATCH, OPTIONS",
+                    "Access-Control-Allow-Headers": "*",
+                    "Access-Control-Allow-Credentials": "false",
+                }
+            )
+            return response
+
+        # Force CORS headers on ALL responses (including errors)
+        response.headers["Access-Control-Allow-Origin"] = "*"
+        response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, PATCH, OPTIONS"
+        response.headers["Access-Control-Allow-Headers"] = "*"
+        response.headers["Access-Control-Allow-Credentials"] = "false"
+        return response
+
+app.add_middleware(ForceCORSMiddleware)
+print("✅ CORS configured: allow_origins=['*'] + Force CORS with OPTIONS handler")
+print("   📝 Allowing: https://kelly-app-v2.vercel.app and all origins")
 
 # Include routers
 app.include_router(auth.router, prefix="/api/auth", tags=["Authentication"])
@@ -158,6 +218,8 @@ app.include_router(exclusion_list.router, prefix="/api/exclusion-list", tags=["E
 app.include_router(row_template.router, prefix="/api/row-template", tags=["Row Template"])
 app.include_router(chr.router, prefix="/api/chr", tags=["CHR"])
 app.include_router(statistics.router, prefix="/api/statistics", tags=["Statistics"])
+app.include_router(event.router, prefix="/api/event", tags=["Event"])
+app.include_router(meet_greet.router, prefix="/api/meet-greet", tags=["Meet & Greet"])
 
 @app.get("/")
 async def root():

@@ -8,7 +8,7 @@ import EventManagement from '../components/EventManagement'
 
 type TabType = 'info-session' | 'info-session-completed' | 'new-hire-orientation' | 'badges' | 'fingerprints' | 'my-visits' | 'statistics' | 'chr' | 'event'
 
-function StaffDashboard() {
+function FrontdeskDashboard() {
   const [activeTab, setActiveTab] = useState<TabType>('info-session')
   const [liveSessions, setLiveSessions] = useState<InfoSessionWithSteps[]>([])
   const [completedSessions, setCompletedSessions] = useState<InfoSessionWithSteps[]>([])
@@ -18,13 +18,14 @@ function StaffDashboard() {
   const [fingerprints, setFingerprints] = useState<any[]>([])
   const [myVisits, setMyVisits] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
+  const [refreshing, setRefreshing] = useState(false)
   const [currentUser, setCurrentUser] = useState<any>(null)
 
   useEffect(() => {
     checkAuth()
     loadData()
     // Set up polling for live updates every 5 seconds
-    const interval = setInterval(loadData, 5000)
+    const interval = setInterval(refreshDataInBackground, 5000)
     return () => clearInterval(interval)
   }, [activeTab])
 
@@ -51,6 +52,7 @@ function StaffDashboard() {
       switch (activeTab) {
         case 'info-session':
           const live = await getLiveInfoSessions()
+          console.log('📊 FrontdeskDashboard: Loaded live sessions:', live.length)
           setLiveSessions(live)
           break
         case 'info-session-completed':
@@ -88,6 +90,7 @@ function StaffDashboard() {
       switch (activeTab) {
         case 'info-session':
           const live = await getLiveInfoSessions()
+          console.log('🔄 FrontdeskDashboard: Refreshed live sessions:', live.length)
           setLiveSessions(live)
           break
         case 'info-session-completed':
@@ -165,7 +168,6 @@ function StaffDashboard() {
                   <th className="px-4 py-2 text-left">Registered At</th>
                   <th className="px-4 py-2 text-left">Assigned Recruiter</th>
                   <th className="px-4 py-2 text-left">Status</th>
-                  <th className="px-4 py-2 text-left">Duplicate</th>
                   <th className="px-4 py-2 text-left">Exclusion</th>
                 </tr>
               </thead>
@@ -180,7 +182,7 @@ function StaffDashboard() {
                     <React.Fragment key={groupKey}>
                       {/* Group Header - Date, Time Slot, and Session Type */}
                       <tr>
-                        <td colSpan={11} className={`px-4 py-4 ${isMorning ? 'bg-blue-200' : 'bg-green-200'} border-t-2 ${isMorning ? 'border-blue-400' : 'border-green-400'} border-b-2`}>
+                        <td colSpan={10} className={`px-4 py-4 ${isMorning ? 'bg-blue-200' : 'bg-green-200'} border-t-2 ${isMorning ? 'border-blue-400' : 'border-green-400'} border-b-2`}>
                           <div className="flex items-center justify-between">
                             <div className="flex items-center gap-4">
                               <span className={`px-3 py-1 rounded-lg font-bold text-lg ${isMorning ? 'bg-blue-600 text-white' : 'bg-green-600 text-white'}`}>
@@ -258,16 +260,6 @@ function StaffDashboard() {
                             </span>
                           </td>
                           <td className="px-4 py-2">
-                            {(session as any).is_duplicate && (
-                              <div className="bg-orange-100 border-2 border-orange-500 rounded p-2 text-orange-800">
-                                <div className="font-bold text-sm">⚠️ DUPLICATE</div>
-                                <div className="text-xs">
-                                  Registered {(session as any).duplicate_count} times
-                                </div>
-                              </div>
-                            )}
-                          </td>
-                          <td className="px-4 py-2">
                             {session.is_in_exclusion_list && session.exclusion_match ? (
                               <div className="bg-red-100 border-2 border-red-500 rounded p-2 text-red-800">
                                 <div className="font-bold text-sm mb-1">⚠️ POSIBLE PC o RR</div>
@@ -336,7 +328,6 @@ function StaffDashboard() {
                   <th className="px-4 py-2 text-left">Registered At</th>
                   <th className="px-4 py-2 text-left">Completed At</th>
                   <th className="px-4 py-2 text-left">Total Duration</th>
-                  <th className="px-4 py-2 text-left">Duplicate</th>
                   <th className="px-4 py-2 text-left">Exclusion</th>
                   <th className="px-4 py-2 text-left">Documents</th>
                 </tr>
@@ -348,7 +339,7 @@ function StaffDashboard() {
                     <React.Fragment key={dateKey}>
                       {dateIndex > 0 && (
                         <tr>
-                          <td colSpan={10} className="px-4 py-3 bg-gray-100 border-t-2 border-gray-300">
+                          <td colSpan={9} className="px-4 py-3 bg-gray-100 border-t-2 border-gray-300">
                             <div className="text-center">
                               <span className="text-gray-700 font-bold text-lg">
                                 ─── {formatMiamiDateDisplay(sessionsForDate[0].created_at)} ───
@@ -395,16 +386,6 @@ function StaffDashboard() {
                               </span>
                             ) : (
                               <span className="text-gray-400">N/A</span>
-                            )}
-                          </td>
-                          <td className="px-4 py-2">
-                            {(session as any).is_duplicate && (
-                              <div className="bg-orange-100 border-2 border-orange-500 rounded p-2 text-orange-800">
-                                <div className="font-bold text-sm">⚠️ DUPLICATE</div>
-                                <div className="text-xs">
-                                  Registered {(session as any).duplicate_count} times
-                                </div>
-                              </div>
                             )}
                           </td>
                           <td className="px-4 py-2">
@@ -801,6 +782,33 @@ function StaffDashboard() {
     )
   }
 
+  const handleOpenOrientationDetails = async (orientation: NewHireOrientation) => {
+    try {
+      const fullOrientation = await getNewHireOrientation(orientation.id)
+      setSelectedOrientation(fullOrientation)
+    } catch (error) {
+      console.error('Error loading orientation details:', error)
+      alert('Error loading orientation details')
+    }
+  }
+
+  const handleSaveOrientationDetails = async () => {
+    if (!selectedOrientation) return
+    try {
+      await updateNewHireOrientation(selectedOrientation.id, {
+        process_status: selectedOrientation.process_status || null,
+        badge_status: selectedOrientation.badge_status || 'pending',
+        missing_steps: selectedOrientation.missing_steps || null
+      })
+      await loadData()
+      setSelectedOrientation(null)
+      alert('Orientation details updated!')
+    } catch (error) {
+      console.error('Error saving orientation details:', error)
+      alert('Error saving orientation details')
+    }
+  }
+
   const renderMyVisits = () => {
     if (loading) return <p className="text-center py-8">Loading...</p>
     
@@ -935,7 +943,7 @@ function StaffDashboard() {
           <div className="flex justify-between items-center">
             <div className="flex items-center gap-3">
               <div>
-                <h1 className="text-3xl font-bold">Staff Dashboard</h1>
+                <h1 className="text-3xl font-bold">Frontdesk Dashboard</h1>
                 {currentUser && (
                   <p className="text-gray-600">Welcome, {currentUser.full_name}</p>
                 )}
@@ -1199,4 +1207,4 @@ function StaffDashboard() {
   )
 }
 
-export default StaffDashboard
+export default FrontdeskDashboard

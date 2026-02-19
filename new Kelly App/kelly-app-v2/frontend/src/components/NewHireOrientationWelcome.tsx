@@ -22,8 +22,13 @@ function NewHireOrientationWelcome({ orientationData, onOrientationCompleted }: 
       try {
         const latest = await getNewHireOrientation(orientationData.id)
         setCurrentOrientationData(latest)
-        setSteps(latest.steps)
-        
+
+        // Only update steps if they changed - prevents checkbox jumping
+        const stepsChanged = JSON.stringify(steps) !== JSON.stringify(latest.steps)
+        if (stepsChanged) {
+          setSteps(latest.steps)
+        }
+
         // Check if orientation was completed
         if (latest.status === 'completed' && !isCompleted) {
           setIsCompleted(true)
@@ -36,13 +41,16 @@ function NewHireOrientationWelcome({ orientationData, onOrientationCompleted }: 
       }
     }
 
-    // Sync immediately
-    syncOrientation()
-    
-    // Sync every 5 seconds
-    const interval = setInterval(syncOrientation, 5000)
-    
-    return () => clearInterval(interval)
+    // Don't sync if already completed - no need
+    if (!isCompleted) {
+      // Sync immediately
+      syncOrientation()
+
+      // Sync every 5 seconds
+      const interval = setInterval(syncOrientation, 5000)
+
+      return () => clearInterval(interval)
+    }
   }, [orientationData.id, isCompleted, onOrientationCompleted])
 
   useEffect(() => {
@@ -108,15 +116,56 @@ function NewHireOrientationWelcome({ orientationData, onOrientationCompleted }: 
   return (
     <div className="min-h-screen bg-gradient-to-br from-green-500 to-green-700 py-8">
       <div className="container mx-auto px-4 max-w-4xl">
-        <div className="bg-white rounded-lg shadow-lg p-8">
+        <div className="bg-white rounded-lg shadow-lg p-8" style={{ maxHeight: 'calc(100vh - 64px)', overflowY: 'auto' }}>
           <h1 className="text-4xl font-bold text-center mb-6 text-gray-800">
             Welcome to New Hire Orientation
           </h1>
 
           <div className="mb-8">
-            <h2 className="text-2xl font-bold mb-4 text-gray-800">
-              Please read and confirm each requirement below:
-            </h2>
+            <div className="bg-white z-50 py-4 mb-4 border-b-2 border-gray-300 shadow-lg" style={{ position: 'sticky', top: 0, zIndex: 50, backgroundColor: 'white' }}>
+              <h2 className="text-2xl font-bold text-gray-800 mb-3">
+                Please read and confirm each requirement below:
+              </h2>
+              {/* Compact view of all checkboxes when sticky */}
+              <div className="flex flex-wrap gap-3 mt-3">
+                {steps.map((step, index) => (
+                  <div 
+                    key={`sticky-step-${step.step_name}`}
+                    className={`flex items-center gap-2 px-3 py-2 rounded-lg border-2 transition-colors flex-shrink-0 min-w-fit ${
+                      step.is_completed
+                        ? 'bg-green-100 border-green-500 shadow-sm'
+                        : 'bg-gray-100 border-gray-300'
+                    }`}
+                  >
+                    <input
+                      type="checkbox"
+                      id={`sticky-step-${index}`}
+                      checked={step.is_completed}
+                      onChange={(e) => {
+                        e.preventDefault()
+                        if (!step.is_completed) {
+                          handleStepComplete(step.step_name)
+                        }
+                      }}
+                      className={`w-5 h-5 text-green-600 border-gray-300 rounded focus:ring-green-500 ${
+                        step.is_completed ? 'cursor-not-allowed' : 'cursor-pointer'
+                      }`}
+                      disabled={step.is_completed}
+                      style={{ pointerEvents: step.is_completed ? 'none' : 'auto' }}
+                    />
+                    <label 
+                      htmlFor={`sticky-step-${index}`}
+                      className={`text-sm font-semibold cursor-pointer select-none ${
+                        step.is_completed ? 'text-green-700' : 'text-gray-700'
+                      }`}
+                    >
+                      Step {index + 1}
+                      {step.is_completed && <span className="ml-1">✓</span>}
+                    </label>
+                  </div>
+                ))}
+              </div>
+            </div>
             
             <div className="space-y-4">
               {steps.map((step, index) => (

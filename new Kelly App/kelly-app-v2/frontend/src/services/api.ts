@@ -1,29 +1,53 @@
 import axios from 'axios'
-import type { InfoSessionRegistration, InfoSessionWithSteps, Announcement, CHRCase, CHRDashboardStats, CHRStatusBreakdown, NewHireOrientationRegistration, NewHireOrientationWithSteps } from '../types'
+import type { InfoSessionRegistration, InfoSessionWithSteps, Announcement, CHRCase, CHRDashboardStats, CHRStatusBreakdown, NewHireOrientationRegistration, NewHireOrientationWithSteps, Event, EventAttendee, EventAttendeeCreate, RecruiterList } from '../types'
 
 // Detectar automáticamente la URL del backend basándose en la URL actual
 // Si se accede desde localhost, usa localhost. Si se accede desde una IP, usa esa IP.
 function getApiBaseUrl(): string {
-  const envUrl = (import.meta as any).env?.VITE_API_URL
+  // Check multiple ways to get the env variable
+  const envUrl = import.meta.env.VITE_API_URL || (import.meta as any).env?.VITE_API_URL
+  console.log('🔧 VITE_API_URL from import.meta.env:', import.meta.env.VITE_API_URL)
+  console.log('🔧 Full import.meta.env:', import.meta.env)
+
   if (envUrl) {
+    console.log('✅ Using VITE_API_URL:', envUrl)
     return envUrl
   }
-  
+
   // Si no hay VITE_API_URL configurado, detectar automáticamente
   const hostname = window.location.hostname
   const protocol = window.location.protocol
-  
+
   // Si es localhost o 127.0.0.1, usar localhost
   if (hostname === 'localhost' || hostname === '127.0.0.1') {
-    return 'http://localhost:3026/api'
+    const url = 'http://localhost:3026/api'
+    console.log('🏠 Using localhost:', url)
+    return url
   }
-  
+
+  // For production (Railway or Vercel) - check VITE_API_URL first
+  if (hostname.includes('railway.app') || hostname.includes('vercel.app')) {
+    const backendUrl = import.meta.env.VITE_API_URL || (import.meta as any).env?.VITE_API_URL
+    if (backendUrl) {
+      console.log('✅ Using VITE_API_URL from environment:', backendUrl)
+      return backendUrl.endsWith('/api') ? backendUrl : `${backendUrl}/api`
+    }
+    // Fallback - use a common Railway backend URL (update with your actual backend URL)
+    const url = 'https://perceptive-nourishment-production-e92a.up.railway.app/api'
+    console.warn('⚠️ VITE_API_URL not set, using fallback URL:', url)
+    console.warn('   Please set VITE_API_URL in Vercel environment variables')
+    return url
+  }
+
   // Si se accede desde una IP o dominio, usar esa misma IP/dominio para el backend
   // Asumimos que el backend está en el mismo host pero puerto 3026
-  return `${protocol}//${hostname}:3026/api`
+  const url = `${protocol}//${hostname}:3026/api`
+  console.log('⚠️ Using auto-detected URL (should use VITE_API_URL instead):', url)
+  return url
 }
 
 const API_BASE_URL = getApiBaseUrl()
+console.log('🌐 Final API_BASE_URL:', API_BASE_URL)
 
 const api = axios.create({
   baseURL: API_BASE_URL,
@@ -69,6 +93,11 @@ export const registerInfoSession = async (
 
 export const getInfoSession = async (id: number): Promise<InfoSessionWithSteps> => {
   const response = await api.get(`/info-session/${id}`)
+  return response.data
+}
+
+export const deleteInfoSession = async (sessionId: number): Promise<{ message: string; session_id: number }> => {
+  const response = await api.delete(`/info-session/${sessionId}`)
   return response.data
 }
 
@@ -231,6 +260,17 @@ export const updateNewHireOrientationConfig = async (config: {
 
 
 // Recruiter API
+export const getRecruiters = async (): Promise<Array<{
+  id: number
+  name: string
+  email: string
+  is_active: boolean
+  status: 'available' | 'busy'
+}>> => {
+  const response = await api.get('/recruiter/')
+  return response.data
+}
+
 export const getRecruiterStatus = async (recruiterId: number): Promise<{
   id: number
   name: string
@@ -263,6 +303,8 @@ export const getAssignedSessions = async (
     session_type: string
     time_slot: string
     status: string
+    is_in_exclusion_list: boolean
+    exclusion_warning_shown: boolean
     ob365_sent: boolean
     i9_sent: boolean
     existing_i9: boolean
@@ -301,14 +343,58 @@ export const completeSession = async (
   }
 ): Promise<{
   message: string
+  status?: string
   completed_at: string | null
   duration_minutes: number | null
 }> => {
-  const response = await api.post(`/recruiter/${recruiterId}/sessions/${sessionId}/complete`, {
-    ...updateData,
-    status: 'completed',
+  // Filter out undefined values and ob365_completed/i9_completed (removed fields)
+  const cleanUpdateData: any = {}
+  if (updateData.ob365_sent !== undefined) cleanUpdateData.ob365_sent = updateData.ob365_sent
+  if (updateData.i9_sent !== undefined) cleanUpdateData.i9_sent = updateData.i9_sent
+  if (updateData.existing_i9 !== undefined) cleanUpdateData.existing_i9 = updateData.existing_i9
+  if (updateData.ineligible !== undefined) cleanUpdateData.ineligible = updateData.ineligible
+  if (updateData.rejected !== undefined) cleanUpdateData.rejected = updateData.rejected
+  if (updateData.drug_screen !== undefined) cleanUpdateData.drug_screen = updateData.drug_screen
+  if (updateData.questions !== undefined) cleanUpdateData.questions = updateData.questions
+  
+  console.log('📤 Calling completeSession:', {
+    recruiterId,
+    sessionId,
+    cleanUpdateData
   })
-  return response.data
+  
+  try {
+    const response = await api.post(`/recruiter/${recruiterId}/sessions/${sessionId}/complete`, cleanUpdateData)
+    console.log('✅ completeSession response:', response.data)
+    return response.data
+  } catch (error: any) {
+    console.error('❌ completeSession error:', error)
+    console.error('❌ Error type:', typeof error)
+    console.error('❌ Error constructor:', error?.constructor?.name)
+    console.error('❌ Error response:', error.response)
+    console.error('❌ Error response data:', error.response?.data)
+    console.error('❌ Error response status:', error.response?.status)
+    console.error('❌ Error message:', error.message)
+    console.error('❌ Error stack:', error.stack)
+    
+    // Create a more descriptive error message
+    let errorMessage = 'Unknown error'
+    if (error.response) {
+      // Server responded with error status
+      errorMessage = error.response.data?.detail || error.response.data?.message || `Server error: ${error.response.status}`
+    } else if (error.request) {
+      // Request was made but no response received
+      errorMessage = 'Network error: No response from server. Please check your connection.'
+    } else {
+      // Something else happened
+      errorMessage = error.message || 'Unknown error occurred'
+    }
+    
+    const enhancedError = new Error(errorMessage)
+    ;(enhancedError as any).originalError = error
+    ;(enhancedError as any).response = error.response
+    throw enhancedError
+  }
 }
 
 export const updateSessionDocuments = async (
@@ -327,6 +413,28 @@ export const updateSessionDocuments = async (
   }
 ): Promise<void> => {
   await api.patch(`/recruiter/${recruiterId}/sessions/${sessionId}/update`, updateData)
+}
+
+
+export const reassignSession = async (
+  recruiterId: number,
+  sessionId: number,
+  newRecruiterId: number
+): Promise<void> => {
+  await api.patch(`/recruiter/${recruiterId}/sessions/${sessionId}/reassign`, null, {
+    params: { new_recruiter_id: newRecruiterId }
+  })
+}
+
+export const getAllRecruiters = async (): Promise<Array<{
+  id: number
+  name: string
+  email: string
+  is_active: boolean
+  status: string
+}>> => {
+  const response = await api.get('/recruiter/')
+  return response.data
 }
 
 export const getRecruiterByEmail = async (email: string): Promise<{
@@ -711,4 +819,89 @@ export const generateRow = async (templateId: number, data: Record<string, any>)
   })
   return response.data
 }
+
+// ========== Event API ==========
+
+export const createEvent = async (name: string): Promise<Event> => {
+  const response = await api.post('/event/events', { name })
+  return response.data
+}
+
+export const getEvents = async (): Promise<Event[]> => {
+  const response = await api.get('/event/events')
+  return response.data
+}
+
+export const getEventByCode = async (unique_code: string): Promise<Event> => {
+  const response = await api.get(`/event/events/code/${unique_code}`)
+  return response.data
+}
+
+export const updateEvent = async (eventId: number, name: string): Promise<Event> => {
+  const response = await api.put(`/event/events/${eventId}`, { name })
+  return response.data
+}
+
+export const toggleEventActive = async (eventId: number): Promise<{ message: string, is_active: boolean }> => {
+  const response = await api.patch(`/event/events/${eventId}/toggle-active`)
+  return response.data
+}
+
+export const deleteEvent = async (eventId: number): Promise<{ message: string }> => {
+  const response = await api.delete(`/event/events/${eventId}`)
+  return response.data
+}
+
+export const registerAttendee = async (unique_code: string, data: EventAttendeeCreate): Promise<EventAttendee> => {
+  const response = await api.post(`/event/events/${unique_code}/register`, data)
+  return response.data
+}
+
+export const getEventAttendees = async (eventId: number): Promise<EventAttendee[]> => {
+  const response = await api.get(`/event/events/${eventId}/attendees`)
+  return response.data
+}
+
+export const updateAttendee = async (
+  attendeeId: number,
+  data: {
+    is_checked?: boolean
+    is_duplicate?: boolean
+    assigned_recruiter_id?: number
+  }
+): Promise<EventAttendee> => {
+  const response = await api.patch(`/event/attendees/${attendeeId}`, data)
+  return response.data
+}
+
+export const bulkUpdateAttendees = async (
+  attendeeIds: number[],
+  data: {
+    is_checked?: boolean
+    is_duplicate?: boolean
+    assigned_recruiter_id?: number
+  }
+): Promise<{ message: string }> => {
+  const response = await api.post('/event/attendees/bulk-update', {
+    attendee_ids: attendeeIds,
+    ...data
+  })
+  return response.data
+}
+
+export const removeDuplicates = async (eventId: number): Promise<{ message: string }> => {
+  const response = await api.delete(`/event/events/${eventId}/remove-duplicates`)
+  return response.data
+}
+
+export const getRecruiterLists = async (eventId: number): Promise<RecruiterList[]> => {
+  const response = await api.get(`/event/events/${eventId}/recruiter-lists`)
+  return response.data
+}
+
+export const deleteAttendee = async (attendeeId: number): Promise<{ message: string }> => {
+  const response = await api.delete(`/event/attendees/${attendeeId}`)
+  return response.data
+}
+
 

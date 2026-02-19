@@ -10,6 +10,7 @@ export default defineConfig({
       'kellyapp.fromcolombiawithcoffees.com',
       'localhost',
       '.fromcolombiawithcoffees.com', // Allow all subdomains
+      '.up.railway.app', // Allow all Railway domains
     ],
     proxy: {
       '/api': {
@@ -17,6 +18,11 @@ export default defineConfig({
         changeOrigin: true,
       },
     },
+  },
+  preview: {
+    host: '0.0.0.0',
+    port: 4173,
+    strictPort: false,
   },
 })
 
