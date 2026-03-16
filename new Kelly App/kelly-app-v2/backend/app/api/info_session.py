@@ -145,7 +145,9 @@ async def register_info_session(
     if not assigned_recruiter:
         # Last resort: get the first active recruiter or create one
         initialize_default_recruiters(db)
-        assigned_recruiter = db.query(Recruiter).filter(Recruiter.is_active == True).first()
+        assigned_recruiter = db.query(Recruiter).filter(Recruiter.is_active == True, Recruiter.status == "available").first()
+        if not assigned_recruiter:
+            assigned_recruiter = db.query(Recruiter).filter(Recruiter.is_active == True).first()
         if not assigned_recruiter:
             # Create a fallback recruiter
             from app.models.recruiter import Recruiter
@@ -690,16 +692,18 @@ async def list_info_sessions(
             session.assigned_recruiter_id = assigned_recruiter.id
             print(f"✅ Auto-assigned session {session.id} ({session.first_name} {session.last_name}) to {assigned_recruiter.name}")
         else:
-            # Fallback: get first active recruiter
-            fallback_recruiter = db.query(Recruiter).filter(Recruiter.is_active == True).first()
+            # Fallback: get first available recruiter, then any active recruiter
+            fallback_recruiter = db.query(Recruiter).filter(Recruiter.is_active == True, Recruiter.status == "available").first()
+            if not fallback_recruiter:
+                fallback_recruiter = db.query(Recruiter).filter(Recruiter.is_active == True).first()
             if fallback_recruiter:
                 session.assigned_recruiter_id = fallback_recruiter.id
                 print(f"✅ Auto-assigned session {session.id} ({session.first_name} {session.last_name}) to {fallback_recruiter.name} (fallback)")
-    
+
     if unassigned_sessions:
         db.commit()
         print(f"✅ Auto-assigned {len(unassigned_sessions)} unassigned sessions")
-    
+
     query = db.query(InfoSession)
     
     if status:
