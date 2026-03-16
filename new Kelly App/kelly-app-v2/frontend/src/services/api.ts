@@ -638,6 +638,7 @@ export interface StatisticsData {
   total_visits: number
   total_badges: number
   total_fingerprints: number
+  total_rejected_info_sessions: number
   info_sessions_by_status: Record<string, number>
   new_hire_orientations_by_status: Record<string, number>
   visits_by_status: Record<string, number>
@@ -902,6 +903,21 @@ export const getRecruiterLists = async (eventId: number): Promise<RecruiterList[
 export const deleteAttendee = async (attendeeId: number): Promise<{ message: string }> => {
   const response = await api.delete(`/event/attendees/${attendeeId}`)
   return response.data
+}
+
+export const exportInfoSessionExcel = async (period: string = 'all'): Promise<void> => {
+  const response = await api.get(`/info-session/export-excel?period=${period}`, {
+    responseType: 'blob'
+  })
+  const url = window.URL.createObjectURL(new Blob([response.data]))
+  const link = document.createElement('a')
+  link.href = url
+  const today = new Date().toISOString().slice(0, 10)
+  link.setAttribute('download', `info_session_${period}_${today}.xlsx`)
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+  window.URL.revokeObjectURL(url)
 }
 
 

@@ -114,7 +114,25 @@ async def register_info_session(
     """
     # Initialize default recruiters if needed
     initialize_default_recruiters(db)
-    
+
+    # Check for duplicate registration: same email AND same time_slot for today
+    today = date.today()
+    today_start = datetime(today.year, today.month, today.day, 0, 0, 0)
+    today_end = datetime(today.year, today.month, today.day, 23, 59, 59)
+    existing = db.query(InfoSession).filter(
+        InfoSession.email.ilike(registration.email.strip()),
+        InfoSession.time_slot == registration.time_slot,
+        InfoSession.status.notin_(["completed"]),
+        InfoSession.created_at >= today_start,
+        InfoSession.created_at <= today_end,
+    ).first()
+
+    if existing:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"You are already registered for the {registration.time_slot} info session today. You cannot register twice for the same time slot."
+        )
+
     # Check exclusion list
     print(f"🔍 Checking exclusion list for: {registration.first_name} {registration.last_name}")
     exclusion_matches = check_name_in_exclusion_list(
@@ -384,6 +402,55 @@ async def get_completed_info_sessions(db: Session = Depends(get_db)):
         result.append(item)
 
     return result
+
+@router.get("/export-excel")
+def export_excel(period: str = "all", db: Session = Depends(get_db)):
+    """Export info session attendees to Excel filtered by period (day/week/month/all)"""
+    import pandas as pd
+    from io import BytesIO
+    from fastapi.responses import StreamingResponse
+    from datetime import timedelta, timezone
+
+    now = datetime.now(timezone.utc)
+
+    query = db.query(InfoSession)
+
+    if period == "day":
+        start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        query = query.filter(InfoSession.created_at >= start)
+    elif period == "week":
+        start = now - timedelta(days=7)
+        query = query.filter(InfoSession.created_at >= start)
+    elif period == "month":
+        start = now - timedelta(days=30)
+        query = query.filter(InfoSession.created_at >= start)
+    # "all" — no filter
+
+    sessions = query.order_by(InfoSession.created_at.desc()).all()
+
+    rows = []
+    for s in sessions:
+        rows.append({
+            "Name": f"{s.first_name} {s.last_name}",
+            "Email": s.email,
+            "Phone": s.phone,
+            "Date": s.created_at.strftime("%m/%d/%Y") if s.created_at else "",
+        })
+
+    df = pd.DataFrame(rows, columns=["Name", "Email", "Phone", "Date"])
+
+    buffer = BytesIO()
+    with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+        df.to_excel(writer, index=False, sheet_name="Info Session Attendees")
+    buffer.seek(0)
+
+    filename = f"info_session_{period}_{now.strftime('%Y%m%d')}.xlsx"
+    return StreamingResponse(
+        buffer,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename={filename}"}
+    )
+
 
 @router.get("/{session_id}", response_model=InfoSessionWithSteps)
 async def get_info_session(
