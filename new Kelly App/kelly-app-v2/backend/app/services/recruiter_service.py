@@ -24,24 +24,13 @@ def get_next_recruiter(db: Session, time_slot: str, session_date: date = None) -
     initialize_default_recruiters(db)
     
     # Get only available recruiters (status == "available" AND is_active == True)
+    # Recruiters with status "busy" are NEVER assigned new applicants
     available_recruiters = db.query(Recruiter).filter(
         Recruiter.is_active == True,
         Recruiter.status == "available"
-    ).order_by(Recruiter.id).all()  # Order by ID for consistent sorting
+    ).order_by(Recruiter.id).all()
 
     print(f"📊 Found {len(available_recruiters)} available recruiters for assignment")
-
-    # Fallback: if no available recruiters, use all active recruiters
-    # This prevents applicants from being left unassigned when all recruiters are busy
-    if not available_recruiters:
-        print("⚠️ No available recruiters, falling back to all active recruiters")
-        available_recruiters = db.query(Recruiter).filter(
-            Recruiter.is_active == True
-        ).order_by(Recruiter.id).all()
-
-    # If still no recruiters, get ANY recruiter (even inactive ones) - we need to assign someone
-    if not available_recruiters:
-        available_recruiters = db.query(Recruiter).all()
     
     # If STILL no recruiters exist (shouldn't happen after initialize_default_recruiters), 
     # create a fallback recruiter
