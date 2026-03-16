@@ -11,10 +11,11 @@ from datetime import datetime, date
 
 def get_next_recruiter(db: Session, time_slot: str, session_date: date = None) -> Optional[Recruiter]:
     """
-    Get the next recruiter to assign based on equitable distribution
-    First tries available recruiters, but if none are available, uses all active recruiters
-    Uses round-robin approach based on current assignments for the same time slot
-    ALWAYS returns a recruiter - creates default recruiters if none exist
+    Get the next recruiter to assign based on equitable distribution.
+    Only assigns to recruiters with status == "available". If none are available,
+    falls back to all active recruiters to prevent applicants from being left unassigned.
+    Uses round-robin approach based on current assignments for the same time slot.
+    ALWAYS returns a recruiter - creates default recruiters if none exist.
     """
     if session_date is None:
         session_date = date.today()
@@ -22,14 +23,22 @@ def get_next_recruiter(db: Session, time_slot: str, session_date: date = None) -
     # Ensure default recruiters exist
     initialize_default_recruiters(db)
     
-    # Get all active recruiters for fair distribution
-    # Use ALL active recruiters, not just "available" ones, to ensure fair rotation
+    # Get only available recruiters (status == "available" AND is_active == True)
     available_recruiters = db.query(Recruiter).filter(
-        Recruiter.is_active == True
+        Recruiter.is_active == True,
+        Recruiter.status == "available"
     ).order_by(Recruiter.id).all()  # Order by ID for consistent sorting
-    
-    print(f"📊 Found {len(available_recruiters)} active recruiters for assignment")
-    
+
+    print(f"📊 Found {len(available_recruiters)} available recruiters for assignment")
+
+    # Fallback: if no available recruiters, use all active recruiters
+    # This prevents applicants from being left unassigned when all recruiters are busy
+    if not available_recruiters:
+        print("⚠️ No available recruiters, falling back to all active recruiters")
+        available_recruiters = db.query(Recruiter).filter(
+            Recruiter.is_active == True
+        ).order_by(Recruiter.id).all()
+
     # If still no recruiters, get ANY recruiter (even inactive ones) - we need to assign someone
     if not available_recruiters:
         available_recruiters = db.query(Recruiter).all()
